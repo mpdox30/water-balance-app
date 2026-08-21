@@ -1,0 +1,30 @@
+name: GEE monthly pipeline (rain / ET0 / land cover / rice paddy)
+
+# Phase 0: skeleton เท่านั้น — workflow_dispatch (manual trigger) ไว้ก่อน ยังไม่เปิด cron
+# เพราะ pipeline จริง (ต่อยอดจาก 03_legacy_prototype/gee_pipeline.py + crop_water_demand.py)
+# ยังไม่ได้เขียนจนกว่าจะถึง Phase 2 ตาม 00_docs/01-phased-work-plan.md
+#
+# ก่อนเปิดใช้จริงต้องทำ 2 อย่าง:
+#   1. Export GEE credential เดิม (ผูกกับ GCP project ee-mpdox69) แล้วเก็บเป็น GitHub Secret
+#      ชื่อ EE_SERVICE_ACCOUNT_KEY (Settings → Secrets and variables → Actions)
+#   2. เขียน pipeline/run_monthly.py จริง (Phase 2) แล้วค่อยเปิด `schedule:` ด้านล่าง
+
+on:
+  workflow_dispatch:
+  # schedule:
+  #   - cron: "0 1 1 * *"  # ต้นเดือน 08:00 น. เวลาไทย (UTC+7) — เปิดใช้หลัง Phase 2 เสร็จ
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: ยังไม่มี pipeline จริง — placeholder เฉยๆ
+        run: |
+          echo "Phase 2 ยังไม่เริ่ม — ดู 00_docs/01-phased-work-plan.md"
+          echo "เมื่อมี pipeline/run_monthly.py แล้ว ให้แทนที่ step นี้ด้วย:"
+          echo "  pip install -r pipeline/requirements.txt"
+          echo "  python pipeline/run_monthly.py"

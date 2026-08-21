@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ระบบสมดุลน้ำชุมชนระดับตำบล</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: "Sarabun", system-ui, sans-serif;
+    max-width: 40rem;
+    margin: 4rem auto;
+    padding: 0 1.5rem;
+    line-height: 1.6;
+  }
+  h1 { font-size: 1.4rem; }
+  code { background: rgba(127,127,127,0.15); padding: 0.1em 0.4em; border-radius: 4px; }
+  #status { margin-top: 1.5rem; padding: 1rem; border-radius: 8px; border: 1px solid rgba(127,127,127,0.3); }
+  .ok { color: #1a7f37; }
+  .fail { color: #c0392b; }
+</style>
+</head>
+<body>
+<h1>ระบบสมดุลน้ำชุมชนระดับตำบล</h1>
+<p>
+  Placeholder หน้าแรก — Phase 0 (ตรวจการเชื่อมต่อ GitHub Pages → Render backend → Supabase)
+  หน้า dashboard จริงจะมาใน Phase 6 ตาม <code>00_docs/01-phased-work-plan.md</code>
+</p>
+<div id="status">กำลังตรวจสอบการเชื่อมต่อ backend…</div>
+<script>
+  // แก้ URL นี้เป็น URL จริงของ Render service หลัง deploy แล้ว
+  const BACKEND_URL = "https://water-balance-app.onrender.com";
+
+  fetch(`${BACKEND_URL}/health`)
+    .then(r => r.json().then(body => ({ ok: r.ok, body })))
+    .then(({ ok, body }) => {
+      const el = document.getElementById("status");
+      if (ok && body.database === "connected") {
+        el.className = "ok";
+        el.textContent = "เชื่อมต่อ backend + Supabase สำเร็จ ✓ (Phase 0 ผ่าน)";
+      } else {
+        el.className = "fail";
+        el.textContent = "backend ตอบกลับ แต่ยังเชื่อม database ไม่สำเร็จ: " + JSON.stringify(body);
+      }
+    })
+    .catch(err => {
+      const el = document.getElementById("status");
+      el.className = "fail";
+      el.textContent = "เชื่อมต่อ backend ไม่สำเร็จ (ยังไม่ได้ deploy หรือ URL ผิด): " + err;
+    });
+</script>
+</body>
+</html>
