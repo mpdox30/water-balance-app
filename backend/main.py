@@ -1,37 +1,42 @@
 """
 main.py — Backend API ของระบบสมดุลน้ำชุมชนระดับตำบล (FastAPI)
 
-สถานะ: Phase 0 "Hello World" skeleton เท่านั้น — endpoint จริง (/tambons, /villages,
-/water-sources, /crop-reports, /livestock-reports ฯลฯ) จะเพิ่มใน Phase 1 ตาม
-00_docs/01-phased-work-plan.md
+สถานะ: Phase 1 — CRUD endpoints พื้นฐาน (/tambons, /villages, /water-sources,
+/crop-reports, /livestock-reports) + auth ขั้นต่ำ (admin / village_rep) ตาม
+00_docs/01-phased-work-plan.md — endpoint จริงอยู่ใน routes.py
 
 Deploy: Render Free Web Service, root directory = backend, start command:
     uvicorn main:app --host 0.0.0.0 --port $PORT
 
-Environment variable ที่ต้องตั้งใน Render:
+Environment variables ที่ต้องตั้งใน Render:
     DATABASE_URL = connection string จาก Supabase (Project Settings → Database →
                    Connection string → "Transaction pooler" เพื่อให้ใช้กับ serverless/
                    free-tier ได้โดยไม่ชนขีดจำกัด connection)
+    SECRET_KEY   = string สุ่มยาวๆ สำหรับเซ็นชื่อ JWT (ห้ามใช้ค่าเดียวกับที่อื่น, ห้าม commit)
 """
 import os
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
+from routes import router as api_router
+
 app = FastAPI(
     title="ระบบสมดุลน้ำชุมชนระดับตำบล — API",
-    description="Phase 0 skeleton — ดู 00_docs/01-phased-work-plan.md สำหรับ endpoint ที่จะเพิ่มใน Phase 1",
-    version="0.0.1",
+    description="Phase 1 — ดู 00_docs/01-phased-work-plan.md",
+    version="0.1.0",
 )
 
-# เปิด CORS กว้างไว้ก่อนสำหรับ Phase 0 (frontend ยังเป็นแค่ static placeholder) —
-# Phase 1 ควรจำกัดเฉพาะ origin ของ GitHub Pages จริง
+# เปิด CORS กว้างไว้ก่อน (frontend ยังเป็น static placeholder บน GitHub Pages, ไม่มี cookie/session) —
+# ปรับจำกัดเฉพาะ origin ของ GitHub Pages จริงได้ใน Phase 6 ตอนทำ dashboard จริงถ้าต้องการเข้มขึ้น
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+
+app.include_router(api_router)
 
 
 @app.get("/")

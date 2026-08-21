@@ -1,0 +1,466 @@
+"""
+routes.py — Phase 1 API endpoints (01-phased-work-plan.md ข้อ Phase 1):
+GET/POST /tambons, /villages, /water-sources, /crop-reports, /livestock-reports
++ POST /auth/login, POST /users (admin สร้างบัญชีตัวแทนหมู่บ้าน), GET /users/me
+
+หลักการสิทธิ์:
+- GET ทุกตัวเปิดอ่านได้โดยไม่ต้อง login (ข้อมูลระดับตำบล/หมู่บ้านไม่ใช่ข้อมูลส่วนบุคคลอ่อนไหว
+  และหน้า dashboard/Phase 3 admin-setup ต้องอ่านได้ก่อนมีระบบ login เต็มรูปแบบ)
+- POST /tambons, /villages, /water-sources — admin เท่านั้น (งาน setup โครงสร้าง ตาม Phase 3)
+- POST /crop-reports, /livestock-reports — admin หรือ village_rep ของหมู่บ้านนั้นเท่านั้น (ตาม Phase 4)
+"""
+import json
+
+import psycopg
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+
+from db import get_conn
+from schemas import (
+    CropReportCreateRequest,
+    CropReportResponse,
+    LivestockReportCreateRequest,
+    LivestockReportResponse,
+    LoginRequest,
+    LoginResponse,
+    TambonCreateRequest,
+    TambonResponse,
+    UserCreateRequest,
+    UserResponse,
+    VillageCreateRequest,
+    VillageResponse,
+    WaterSourceCreateRequest,
+    WaterSourceResponse,
+)
+from security import (
+    check_can_write_village,
+    create_access_token,
+    get_current_user,
+    hash_password,
+    require_admin,
+    verify_password,
+)
+
+router = APIRouter()
+
+
+# ============================================================
+# Auth
+# ============================================================
+
+@router.post("/auth/login", response_model=LoginResponse)
+def login(body: LoginRequest):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "select user_id, username, password_hash, role, village_id, display_name "
+                "from users where username = %s",
+                (body.username,),
+            )
+            row = cur.fetchone()
+    if not row or not verify_password(body.password, row["password_hash"]):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="username หรือ password ไม่ถูกต้อง")
+    token = create_access_token(row)
+    return LoginResponse(
+        access_token=token,
+        role=row["role"],
+        village_id=str(row["village_id"]) if row["village_id"] else None,
+        display_name=row["display_name"],
+    )
+
+
+@router.get("/users/me", response_model=UserResponse)
+def get_me(user: dict = Depends(get_current_user)):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "select user_id, username, role, village_id, display_name from users where user_id = %s",
+                (user["user_id"],),
+            )
+            row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="user not found")
+    return _row_to_user(row)
+
+
+@router.post("/users", response_model=UserResponse, status_code=201)
+def create_user(body: UserCreateRequest, _admin: dict = Depends(require_admin)):
+    """admin สร้างบัญชีตัวแทนหมู่บ้าน (Phase 4) หรือ admin เพิ่มเติม"""
+    if body.role == "village_rep" and not body.village_id:
+        raise HTTPException(status_code=422, detail="village_rep ต้องระบุ village_id")
+    if body.role == "admin" and body.village_id:
+        raise HTTPException(status_code=422, detail="admin ต้องไม่ผูก village_id")
+    pw_hash = hash_password(body.password)
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "insert into users (username, password_hash, role, village_id, display_name) "
+                    "values (%s, %s, %s, %s, %s) "
+                    "returning user_id, username, role, village_id, display_name",
+                    (body.username, pw_hash, body.role, body.village_id, body.display_name),
+                )
+                row = cur.fetchone()
+            conn.commit()
+    except psycopg.errors.UniqueViolation:
+        raise HTTPException(status_code=409, detail="username นี้มีอยู่แล้ว")
+    return _row_to_user(row)
+
+
+def _row_to_user(row) -> UserResponse:
+    return UserResponse(
+        user_id=str(row["user_id"]),
+        username=row["username"],
+        role=row["role"],
+        village_id=str(row["village_id"]) if row["village_id"] else None,
+        display_name=row["display_name"],
+    )
+
+
+# ============================================================
+# Tambons
+# ============================================================
+
+_TAMBON_COLS = "tambon_id, name_th, name_en, province_th, amphoe_th, area_km2, area_km2_source, is_pilot"
+
+
+def _row_to_tambon(row, geom_geojson=None) -> TambonResponse:
+    return TambonResponse(
+        tambon_id=str(row["tambon_id"]),
+        name_th=row["name_th"],
+        name_en=row["name_en"],
+        province_th=row["province_th"],
+        amphoe_th=row["amphoe_th"],
+        area_km2=float(row["area_km2"]),
+        area_km2_source=row["area_km2_source"],
+        is_pilot=row["is_pilot"],
+        geom_geojson=geom_geojson,
+    )
+
+
+@router.get("/tambons", response_model=list[TambonResponse])
+def list_tambons(is_pilot: bool | None = Query(default=None), geom: bool = Query(default=False)):
+    geom_select = ", ST_AsGeoJSON(geom)::json as geom_geojson" if geom else ""
+    sql = f"select {_TAMBON_COLS}{geom_select} from tambons"
+    params: list = []
+    if is_pilot is not None:
+        sql += " where is_pilot = %s"
+        params.append(is_pilot)
+    sql += " order by name_th"
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+    return [_row_to_tambon(r, r.get("geom_geojson")) for r in rows]
+
+
+@router.get("/tambons/{tambon_id}", response_model=TambonResponse)
+def get_tambon(tambon_id: str, geom: bool = Query(default=False)):
+    geom_select = ", ST_AsGeoJSON(geom)::json as geom_geojson" if geom else ""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"select {_TAMBON_COLS}{geom_select} from tambons where tambon_id = %s", (tambon_id,))
+            row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="tambon not found")
+    return _row_to_tambon(row, row.get("geom_geojson"))
+
+
+@router.post("/tambons", response_model=TambonResponse, status_code=201)
+def create_tambon(body: TambonCreateRequest, _admin: dict = Depends(require_admin)):
+    geom_expr = "ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326)" if body.geom_geojson else "NULL"
+    params = [
+        body.name_th,
+        body.name_en,
+        body.province_th,
+        body.amphoe_th,
+        body.area_km2,
+        body.area_km2_source,
+        body.is_pilot,
+    ]
+    if body.geom_geojson:
+        params.append(json.dumps(body.geom_geojson))
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"insert into tambons (name_th, name_en, province_th, amphoe_th, area_km2, "
+                f"area_km2_source, is_pilot, geom) "
+                f"values (%s, %s, %s, %s, %s, %s, %s, {geom_expr}) "
+                f"returning {_TAMBON_COLS}",
+                params,
+            )
+            row = cur.fetchone()
+        conn.commit()
+    return _row_to_tambon(row)
+
+
+# ============================================================
+# Villages
+# ============================================================
+
+_VILLAGE_COLS = (
+    "village_id, tambon_id, moo, name_th, name_source, households, population, "
+    "residential_rai, agri_rai, forest_rai, other_rai, total_rai, data_year_be"
+)
+
+
+def _row_to_village(row) -> VillageResponse:
+    def _f(v):
+        return float(v) if v is not None else None
+
+    return VillageResponse(
+        village_id=str(row["village_id"]),
+        tambon_id=str(row["tambon_id"]),
+        moo=row["moo"],
+        name_th=row["name_th"],
+        name_source=row["name_source"],
+        households=row["households"],
+        population=row["population"],
+        residential_rai=_f(row["residential_rai"]),
+        agri_rai=_f(row["agri_rai"]),
+        forest_rai=_f(row["forest_rai"]),
+        other_rai=_f(row["other_rai"]),
+        total_rai=_f(row["total_rai"]),
+        data_year_be=row["data_year_be"],
+    )
+
+
+@router.get("/villages", response_model=list[VillageResponse])
+def list_villages(tambon_id: str | None = Query(default=None)):
+    sql = f"select {_VILLAGE_COLS} from villages"
+    params: list = []
+    if tambon_id:
+        sql += " where tambon_id = %s"
+        params.append(tambon_id)
+    sql += " order by moo"
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+    return [_row_to_village(r) for r in rows]
+
+
+@router.get("/villages/{village_id}", response_model=VillageResponse)
+def get_village(village_id: str):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"select {_VILLAGE_COLS} from villages where village_id = %s", (village_id,))
+            row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="village not found")
+    return _row_to_village(row)
+
+
+@router.post("/villages", response_model=VillageResponse, status_code=201)
+def create_village(body: VillageCreateRequest, _admin: dict = Depends(require_admin)):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "insert into villages (tambon_id, moo, name_th, name_source, households, population, "
+                "residential_rai, agri_rai, forest_rai, other_rai, total_rai, data_year_be) "
+                "values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                f"returning {_VILLAGE_COLS}",
+                (
+                    body.tambon_id,
+                    body.moo,
+                    body.name_th,
+                    body.name_source,
+                    body.households,
+                    body.population,
+                    body.residential_rai,
+                    body.agri_rai,
+                    body.forest_rai,
+                    body.other_rai,
+                    body.total_rai,
+                    body.data_year_be,
+                ),
+            )
+            row = cur.fetchone()
+        conn.commit()
+    return _row_to_village(row)
+
+
+# ============================================================
+# Water storage sources
+# ============================================================
+
+_SOURCE_COLS = (
+    "source_id, tambon_id, village_id, source_type, name_th, name_en, telemetry_code, "
+    "stored_capacity_m3, catchment_yield_potential_m3_per_year, capacity_source_note, "
+    "lat, lon, built_by, beneficiary_agri_rai"
+)
+
+
+def _row_to_source(row) -> WaterSourceResponse:
+    def _f(v):
+        return float(v) if v is not None else None
+
+    return WaterSourceResponse(
+        source_id=str(row["source_id"]),
+        tambon_id=str(row["tambon_id"]),
+        village_id=str(row["village_id"]) if row["village_id"] else None,
+        source_type=row["source_type"],
+        name_th=row["name_th"],
+        name_en=row["name_en"],
+        telemetry_code=row["telemetry_code"],
+        stored_capacity_m3=_f(row["stored_capacity_m3"]),
+        catchment_yield_potential_m3_per_year=_f(row["catchment_yield_potential_m3_per_year"]),
+        capacity_source_note=row["capacity_source_note"],
+        lat=_f(row["lat"]),
+        lon=_f(row["lon"]),
+        built_by=row["built_by"],
+        beneficiary_agri_rai=_f(row["beneficiary_agri_rai"]),
+    )
+
+
+@router.get("/water-sources", response_model=list[WaterSourceResponse])
+def list_water_sources(
+    tambon_id: str | None = Query(default=None),
+    village_id: str | None = Query(default=None),
+    source_type: str | None = Query(default=None),
+):
+    sql = f"select {_SOURCE_COLS} from water_storage_sources where 1=1"
+    params: list = []
+    if tambon_id:
+        sql += " and tambon_id = %s"
+        params.append(tambon_id)
+    if village_id:
+        sql += " and village_id = %s"
+        params.append(village_id)
+    if source_type:
+        sql += " and source_type = %s"
+        params.append(source_type)
+    sql += " order by name_th"
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+    return [_row_to_source(r) for r in rows]
+
+
+@router.get("/water-sources/{source_id}", response_model=WaterSourceResponse)
+def get_water_source(source_id: str):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"select {_SOURCE_COLS} from water_storage_sources where source_id = %s", (source_id,))
+            row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="water source not found")
+    return _row_to_source(row)
+
+
+@router.post("/water-sources", response_model=WaterSourceResponse, status_code=201)
+def create_water_source(body: WaterSourceCreateRequest, _admin: dict = Depends(require_admin)):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "insert into water_storage_sources (tambon_id, village_id, source_type, name_th, name_en, "
+                "telemetry_code, stored_capacity_m3, catchment_yield_potential_m3_per_year, "
+                "capacity_source_note, lat, lon, built_by, beneficiary_agri_rai) "
+                "values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                f"returning {_SOURCE_COLS}",
+                (
+                    body.tambon_id,
+                    body.village_id,
+                    body.source_type,
+                    body.name_th,
+                    body.name_en,
+                    body.telemetry_code,
+                    body.stored_capacity_m3,
+                    body.catchment_yield_potential_m3_per_year,
+                    body.capacity_source_note,
+                    body.lat,
+                    body.lon,
+                    body.built_by,
+                    body.beneficiary_agri_rai,
+                ),
+            )
+            row = cur.fetchone()
+        conn.commit()
+    return _row_to_source(row)
+
+
+# ============================================================
+# Crop reports
+# ============================================================
+
+_CROP_COLS = "report_id, village_id, crop_name, planted_area_rai, reported_month, reported_by_role"
+
+
+@router.get("/crop-reports", response_model=list[CropReportResponse])
+def list_crop_reports(village_id: str | None = Query(default=None), month: str | None = Query(default=None)):
+    sql = f"select {_CROP_COLS} from crop_report where 1=1"
+    params: list = []
+    if village_id:
+        sql += " and village_id = %s"
+        params.append(village_id)
+    if month:
+        sql += " and reported_month = %s"
+        params.append(month)
+    sql += " order by reported_month desc"
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+    return [CropReportResponse(**{**r, "report_id": str(r["report_id"]), "village_id": str(r["village_id"])}) for r in rows]
+
+
+@router.post("/crop-reports", response_model=CropReportResponse, status_code=201)
+def create_crop_report(body: CropReportCreateRequest, user: dict = Depends(get_current_user)):
+    check_can_write_village(user, body.village_id)
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "insert into crop_report (village_id, crop_name, planted_area_rai, reported_month, reported_by_role) "
+                "values (%s, %s, %s, %s, %s) "
+                f"returning {_CROP_COLS}",
+                (body.village_id, body.crop_name, body.planted_area_rai, body.reported_month, user["role"]),
+            )
+            row = cur.fetchone()
+        conn.commit()
+    return CropReportResponse(**{**row, "report_id": str(row["report_id"]), "village_id": str(row["village_id"])})
+
+
+# ============================================================
+# Livestock reports
+# ============================================================
+
+_LIVESTOCK_COLS = "report_id, village_id, species, head_count, reported_month, reported_by_role"
+
+
+@router.get("/livestock-reports", response_model=list[LivestockReportResponse])
+def list_livestock_reports(village_id: str | None = Query(default=None), month: str | None = Query(default=None)):
+    sql = f"select {_LIVESTOCK_COLS} from livestock_report where 1=1"
+    params: list = []
+    if village_id:
+        sql += " and village_id = %s"
+        params.append(village_id)
+    if month:
+        sql += " and reported_month = %s"
+        params.append(month)
+    sql += " order by reported_month desc"
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+    return [
+        LivestockReportResponse(**{**r, "report_id": str(r["report_id"]), "village_id": str(r["village_id"])})
+        for r in rows
+    ]
+
+
+@router.post("/livestock-reports", response_model=LivestockReportResponse, status_code=201)
+def create_livestock_report(body: LivestockReportCreateRequest, user: dict = Depends(get_current_user)):
+    check_can_write_village(user, body.village_id)
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "insert into livestock_report (village_id, species, head_count, reported_month, reported_by_role) "
+                "values (%s, %s, %s, %s, %s) "
+                f"returning {_LIVESTOCK_COLS}",
+                (body.village_id, body.species, body.head_count, body.reported_month, user["role"]),
+            )
+            row = cur.fetchone()
+        conn.commit()
+    return LivestockReportResponse(
+        **{**row, "report_id": str(row["report_id"]), "village_id": str(row["village_id"])}
+    )
