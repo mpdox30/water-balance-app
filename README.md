@@ -135,8 +135,8 @@ curl -X POST <BACKEND_URL>/users \
 
 ## เกณฑ์ผ่าน Phase 2 (ตาม 01-phased-work-plan.md)
 
-- [ ] รัน pipeline ย้อนหลังกับข้อมูลฝนจริงของแม่นาเรือ เทียบผลลัพธ์สมเหตุสมผล — โค้ดเขียน+ทดสอบ logic
-      (DB read/write, land cover) ผ่านหมดแล้วด้วยข้อมูลจริงในเครื่อง แต่ยังไม่เคยรันกับ GEE credential
-      จริง (CHIRPS/MOD16A2/Sentinel-1) เพราะยังไม่มี credential ให้ทดสอบ — รอ `EE_SERVICE_ACCOUNT_KEY`
-- [ ] Scheduled workflow รันสำเร็จอัตโนมัติอย่างน้อย 1 รอบเต็มโดยไม่ต้องสั่งมือ — cron ปิดอยู่โดยตั้งใจ
-      จนกว่าจะทดสอบ manual (workflow_dispatch) ผ่านก่อน
+- [x] รัน pipeline ย้อนหลังกับข้อมูลฝนจริงของแม่นาเรือ เทียบผลลัพธ์สมเหตุสมผล — ทดสอบ manual
+      (workflow_dispatch) แล้ว 2026-08-21: rainfall_mm=197.4, et0_mm=36.1 (2026-07, สมเหตุสมผลกับ
+      ฤดูฝนภาคเหนือ), land cover + rice paddy เขียนครบทั้ง 18 หมู่บ้าน
+- [ ] Scheduled workflow รันสำเร็จอัตโนมัติอย่างน้อย 1 รอบเต็มโดยไม่ต้องสั่งมือ — เปิด cron แล้ว
+      (ต้นเดือน 08:00 เวลาไทย) รอยืนยันรอบอัตโนมัติแรกต้นเดือนถัดไป

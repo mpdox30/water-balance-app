@@ -1,10 +1,9 @@
 name: GEE monthly pipeline (rain / ET0 / land cover / rice paddy)
 
 # Phase 2: pipeline จริงเขียนเสร็จแล้ว (pipeline/run_monthly.py ต่อยอดจาก
-# 03_legacy_prototype/gee_pipeline.py) — schedule ยังปิดอยู่โดยตั้งใจ (comment ไว้) จนกว่าจะรัน
-# workflow_dispatch (manual) แล้วยืนยันผลถูกต้องอย่างน้อย 1 รอบก่อน ตามเกณฑ์ผ่าน Phase 2:
-# "Scheduled workflow รันสำเร็จอัตโนมัติอย่างน้อย 1 รอบเต็มโดยไม่ต้องสั่งมือ" — เปิด cron
-# ด้านล่างเองได้เลยหลังทดสอบ manual ผ่านแล้ว (ลบ # หน้า schedule/cron 2 บรรทัด)
+# 03_legacy_prototype/gee_pipeline.py) — ทดสอบ workflow_dispatch (manual) แล้ว 2026-08-21: รันผ่าน
+# (47s), เขียนข้อมูลจริงครบ 18 หมู่บ้าน (rainfall_mm=197.4, et0_mm=36.1 สำหรับ 2026-07, ค่าสมเหตุสมผล
+# กับฤดูฝนภาคเหนือ) — เปิด cron ให้รันอัตโนมัติทุกต้นเดือนแล้ว ตามเกณฑ์ผ่าน Phase 2 ข้อ 2
 #
 # ต้องตั้ง GitHub Secret ก่อนรัน (Settings → Secrets and variables → Actions):
 #   EE_SERVICE_ACCOUNT_KEY — เนื้อหา JSON เต็มของ GEE service account (ผูกกับ GCP project ที่เปิด
@@ -20,8 +19,8 @@ on:
       month:
         description: "เดือน (1-12) — เว้นว่างไว้ = เดือนก่อนหน้าอัตโนมัติ"
         required: false
-  # schedule:
-  #   - cron: "0 1 1 * *"  # ต้นเดือน 08:00 น. เวลาไทย (UTC+7) — เปิดใช้หลังทดสอบ manual ผ่านแล้ว
+  schedule:
+    - cron: "0 1 1 * *"  # ต้นเดือน 08:00 น. เวลาไทย (UTC+7)
 
 jobs:
   run-pipeline:
