@@ -11,11 +11,27 @@
 ```
 backend/     FastAPI — deploy บน Render Free Web Service (root directory = backend)
 frontend/    Static site — deploy บน GitHub Pages (source = GitHub Actions)
-pipeline/    GEE pipeline รายเดือน (Phase 2) + data/geo/ (GeoJSON ที่แปลงไว้แล้วจาก Phase 0)
-.github/workflows/   deploy-pages.yml (auto), gee-pipeline.yml (manual จนกว่าจะถึง Phase 2)
+pipeline/    GEE pipeline รายเดือน (Phase 2 — เขียนเสร็จแล้ว) + data/geo/ (GeoJSON อ้างอิงทั้งหมด)
+.github/workflows/   deploy-pages.yml (auto), gee-pipeline.yml (manual — รอทดสอบ credential จริงก่อนเปิด cron)
 ```
 
-## สถานะปัจจุบัน: Phase 1
+## สถานะปัจจุบัน: Phase 2
+
+**Phase 2 — เพิ่มใหม่ (โค้ดเขียนเสร็จ ทดสอบ logic ทั้งหมดที่ไม่พึ่ง Earth Engine แล้ว แต่ยังไม่ได้รันกับ
+GEE credential จริง — ดู "ต้องทำเอง" ด้านล่าง):**
+- [x] `pipeline/rainfall_et0.py` — ฝน (CHIRPS) + ET0 (MOD16A2) ระดับตำบล ต่อยอดจาก
+      `03_legacy_prototype/gee_pipeline.py`
+- [x] `pipeline/landcover.py` — runoff coefficient ถ่วงน้ำหนักจากข้อมูลการใช้ที่ดินทางการปี 2566
+      (**เปลี่ยนจากแผนเดิมที่จะใช้ Sentinel-2 classification** — เจอข้อมูลทางการที่แม่นยำกว่าระหว่างทำ
+      ดูเหตุผลเต็มใน `pipeline/landcover.py` หัวไฟล์)
+- [x] `pipeline/rice_paddy.py` — พื้นที่นาข้าว (Sentinel-1 SAR) ระดับหมู่บ้าน ต่อยอดจากโค้ดเดิม
+- [x] `pipeline/run_monthly.py` — orchestrator เขียนผลเข้า Supabase โดยตรงทุกตำบล/หมู่บ้าน
+- [x] `.github/workflows/gee-pipeline.yml` — พร้อมรัน manual (workflow_dispatch) แล้ว cron ยังปิดอยู่
+      โดยตั้งใจจนกว่าจะทดสอบ manual ผ่าน 1 รอบก่อน (ตามเกณฑ์ผ่าน Phase 2)
+- [ ] **ต้องทำเอง:** ตั้ง GitHub Secret 2 ตัว (`EE_SERVICE_ACCOUNT_KEY`, `DATABASE_URL`) แล้วรัน
+      workflow ด้วยมือ 1 ครั้งเพื่อยืนยัน ก่อนเปิด `schedule:` — ดูรายละเอียดในแชท
+
+## Phase 1 (เสร็จแล้ว)
 
 Phase 0 ผ่านครบแล้ว (repo/Supabase/Render/GitHub Pages เชื่อมกัน + seed ข้อมูลจริง) กำลังอยู่ระหว่าง
 Phase 1 — Data model + Backend API ขั้นต่ำ ตาม `01-phased-work-plan.md`
@@ -113,6 +129,14 @@ curl -X POST <BACKEND_URL>/users \
 
 ## เกณฑ์ผ่าน Phase 1 (ตาม 01-phased-work-plan.md)
 
-- [ ] เรียก API ทุกตัวผ่าน Postman/curl ได้จริงบน Render (ไม่ใช่แค่ localhost) — ทดสอบ local กับ
-      Postgres+PostGIS จริงผ่านหมดแล้วก่อนส่งมอบ เหลือแค่ยืนยันซ้ำบน Render จริงหลังตั้ง `SECRET_KEY`
+- [x] เรียก API ทุกตัวผ่าน Postman/curl ได้จริงบน Render (ยืนยันแล้ว: `/tambons`, `/villages`,
+      `/health` ตอบถูกต้องบน URL จริงหลังตั้ง `SECRET_KEY`)
 - [x] ข้อมูลที่ seed ไว้ใน Phase 0 อ่านผ่าน API ได้ครบ (ทดสอบแล้ว: 1 ตำบล, 18 หมู่บ้าน, 11 แหล่งน้ำ)
+
+## เกณฑ์ผ่าน Phase 2 (ตาม 01-phased-work-plan.md)
+
+- [ ] รัน pipeline ย้อนหลังกับข้อมูลฝนจริงของแม่นาเรือ เทียบผลลัพธ์สมเหตุสมผล — โค้ดเขียน+ทดสอบ logic
+      (DB read/write, land cover) ผ่านหมดแล้วด้วยข้อมูลจริงในเครื่อง แต่ยังไม่เคยรันกับ GEE credential
+      จริง (CHIRPS/MOD16A2/Sentinel-1) เพราะยังไม่มี credential ให้ทดสอบ — รอ `EE_SERVICE_ACCOUNT_KEY`
+- [ ] Scheduled workflow รันสำเร็จอัตโนมัติอย่างน้อย 1 รอบเต็มโดยไม่ต้องสั่งมือ — cron ปิดอยู่โดยตั้งใจ
+      จนกว่าจะทดสอบ manual (workflow_dispatch) ผ่านก่อน

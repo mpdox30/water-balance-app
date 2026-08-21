@@ -1,18 +1,27 @@
 name: GEE monthly pipeline (rain / ET0 / land cover / rice paddy)
 
-# Phase 0: skeleton เท่านั้น — workflow_dispatch (manual trigger) ไว้ก่อน ยังไม่เปิด cron
-# เพราะ pipeline จริง (ต่อยอดจาก 03_legacy_prototype/gee_pipeline.py + crop_water_demand.py)
-# ยังไม่ได้เขียนจนกว่าจะถึง Phase 2 ตาม 00_docs/01-phased-work-plan.md
+# Phase 2: pipeline จริงเขียนเสร็จแล้ว (pipeline/run_monthly.py ต่อยอดจาก
+# 03_legacy_prototype/gee_pipeline.py) — schedule ยังปิดอยู่โดยตั้งใจ (comment ไว้) จนกว่าจะรัน
+# workflow_dispatch (manual) แล้วยืนยันผลถูกต้องอย่างน้อย 1 รอบก่อน ตามเกณฑ์ผ่าน Phase 2:
+# "Scheduled workflow รันสำเร็จอัตโนมัติอย่างน้อย 1 รอบเต็มโดยไม่ต้องสั่งมือ" — เปิด cron
+# ด้านล่างเองได้เลยหลังทดสอบ manual ผ่านแล้ว (ลบ # หน้า schedule/cron 2 บรรทัด)
 #
-# ก่อนเปิดใช้จริงต้องทำ 2 อย่าง:
-#   1. Export GEE credential เดิม (ผูกกับ GCP project ee-mpdox69) แล้วเก็บเป็น GitHub Secret
-#      ชื่อ EE_SERVICE_ACCOUNT_KEY (Settings → Secrets and variables → Actions)
-#   2. เขียน pipeline/run_monthly.py จริง (Phase 2) แล้วค่อยเปิด `schedule:` ด้านล่าง
+# ต้องตั้ง GitHub Secret ก่อนรัน (Settings → Secrets and variables → Actions):
+#   EE_SERVICE_ACCOUNT_KEY — เนื้อหา JSON เต็มของ GEE service account (ผูกกับ GCP project ที่เปิด
+#                            ใช้ Earth Engine API แล้ว)
+#   DATABASE_URL           — เหมือนกับที่ตั้งใน Render (Supabase Transaction pooler)
 
 on:
   workflow_dispatch:
+    inputs:
+      year:
+        description: "ปี (ค.ศ.) — เว้นว่างไว้ = เดือนก่อนหน้าอัตโนมัติ"
+        required: false
+      month:
+        description: "เดือน (1-12) — เว้นว่างไว้ = เดือนก่อนหน้าอัตโนมัติ"
+        required: false
   # schedule:
-  #   - cron: "0 1 1 * *"  # ต้นเดือน 08:00 น. เวลาไทย (UTC+7) — เปิดใช้หลัง Phase 2 เสร็จ
+  #   - cron: "0 1 1 * *"  # ต้นเดือน 08:00 น. เวลาไทย (UTC+7) — เปิดใช้หลังทดสอบ manual ผ่านแล้ว
 
 jobs:
   run-pipeline:
@@ -21,10 +30,16 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-      - name: ยังไม่มี pipeline จริง — placeholder เฉยๆ
+          python-version: "3.12"
+      - name: ติดตั้ง dependencies
+        run: pip install -r pipeline/requirements.txt
+      - name: รัน pipeline
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          EE_SERVICE_ACCOUNT_KEY: ${{ secrets.EE_SERVICE_ACCOUNT_KEY }}
         run: |
-          echo "Phase 2 ยังไม่เริ่ม — ดู 00_docs/01-phased-work-plan.md"
-          echo "เมื่อมี pipeline/run_monthly.py แล้ว ให้แทนที่ step นี้ด้วย:"
-          echo "  pip install -r pipeline/requirements.txt"
-          echo "  python pipeline/run_monthly.py"
+          if [ -n "${{ github.event.inputs.year }}" ] && [ -n "${{ github.event.inputs.month }}" ]; then
+            python pipeline/run_monthly.py "${{ github.event.inputs.year }}" "${{ github.event.inputs.month }}"
+          else
+            python pipeline/run_monthly.py
+          fi
