@@ -17,6 +17,15 @@ if (auth) {
 
 const LIVESTOCK_SPECIES = ["โคเนื้อ", "โคนม", "กระบือ", "สุกร", "ไก่", "เป็ด", "ห่าน", "แพะ", "แกะ"];
 
+// ค่า sentinel แทน "ยืนยันแล้วว่าไม่มีปศุสัตว์เดือนนี้" — ใช้ endpoint POST /livestock-reports เดิม
+// (species=ค่านี้, head_count=0) แทนที่จะเพิ่ม backend/DB ใหม่ เพราะ backend ยังไม่มีสถานะ "ยืนยันว่าไม่มี"
+// แยกจาก "ยังไม่ได้รายงาน" เลย — การไม่มีแถวใดๆ ใน livestock_report เดือนนั้นแปลได้ 2 อย่าง (ไม่มีจริง
+// หรือลืมกรอก) การมี sentinel row ทำให้แยกออกจากกันได้ชัดเจนโดยไม่ต้องแก้ schema/backend
+// **สำคัญ: ถ้าจะทำ Phase 5 (balance engine) ต่อ ต้อง filter แถว species=NO_LIVESTOCK_SENTINEL ออกก่อน
+// เอาไปคำนวณความต้องการน้ำปศุสัตว์ ไม่งั้นจะนับเป็นสัตว์ชนิดหนึ่งที่มี head_count=0 (ไม่ผิดเชิงตัวเลข
+// แต่ไม่ควรโผล่ในรายงาน/dashboard เป็นชื่อชนิดสัตว์)**
+const NO_LIVESTOCK_SENTINEL = "ไม่มีปศุสัตว์";
+
 let currentVillage = null; // { village_id, moo, name_th, agri_rai, ... }
 let reportMonthValue = ""; // "YYYY-MM"
 let existingCrops = [];
@@ -139,6 +148,8 @@ function refreshFormGating() {
 async function loadExistingReports() {
   const statusEl = document.getElementById("village-month-status");
   statusEl.textContent = "กำลังโหลดรายงานที่ส่งไปแล้ว...";
+  document.getElementById("crop-carry-note").textContent = "";
+  document.getElementById("livestock-carry-note").textContent = "";
   const monthDate = reportMonthValue + "-01";
   try {
     const [cropRes, livestockRes] = await Promise.all([
@@ -150,8 +161,51 @@ async function loadExistingReports() {
     statusEl.textContent = "";
     renderExistingCrops();
     renderExistingLivestock();
+    await maybeCarryForwardFromPreviousMonth();
   } catch (err) {
     statusEl.textContent = "โหลดรายงานที่ส่งไปแล้วไม่สำเร็จ: " + err.message;
+  }
+}
+
+/** "YYYY-MM" ของเดือนก่อนหน้า "YYYY-MM" ที่ให้มา */
+function previousMonthOf(monthStr) {
+  const [y, m] = monthStr.split("-").map(Number);
+  const d = new Date(y, m - 2, 1); // เดือนใน Date ของ JS นับ 0 = ม.ค. ดังนั้น m-2 คือเดือนก่อนหน้า
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+}
+
+/** ดึงรายงานพืช/ปศุสัตว์ของเดือนก่อนหน้ามา pre-fill ให้อัตโนมัติ ถ้าเดือนที่กำลังดูอยู่ยังไม่มีใครกรอกเลย
+ * (ลดภาระพิมพ์ซ้ำทุกเดือนสำหรับพืช/สัตว์ที่ยังปลูก/เลี้ยงต่อเนื่อง — ผู้ใช้แค่ตรวจสอบ/แก้ตัวเลขแล้วกดบันทึก
+ * ไม่ได้ auto-submit ให้เอง เพื่อไม่ให้มีข้อมูลที่ไม่ได้ยืนยันหลุดเข้าระบบ) ถ้าดึงเดือนก่อนไม่สำเร็จก็แค่
+ * ไม่ pre-fill ให้ ไม่ block การกรอกใหม่ตามปกติ */
+async function maybeCarryForwardFromPreviousMonth() {
+  if (existingCrops.length || existingLivestock.length) return; // เดือนนี้มีรายงานอยู่แล้ว ไม่ต้อง carry-forward ทับ
+  const prevMonthLabel = previousMonthOf(reportMonthValue);
+  const prevMonthDate = prevMonthLabel + "-01";
+  try {
+    const [cropRes, livestockRes] = await Promise.all([
+      fetch(BACKEND_URL + "/crop-reports?village_id=" + encodeURIComponent(currentVillage.village_id) + "&month=" + prevMonthDate),
+      fetch(BACKEND_URL + "/livestock-reports?village_id=" + encodeURIComponent(currentVillage.village_id) + "&month=" + prevMonthDate),
+    ]);
+    const prevCrops = await cropRes.json();
+    const prevLivestock = (await livestockRes.json()).filter((l) => l.species !== NO_LIVESTOCK_SENTINEL);
+
+    if (prevCrops.length) {
+      document.getElementById("crop-rows").innerHTML = "";
+      prevCrops.forEach((c) => addCropRow(c.crop_name, c.planted_area_rai));
+      document.getElementById("crop-carry-note").textContent =
+        "ดึงรายการจากเดือน " + prevMonthLabel + " มาให้อัตโนมัติ — ตรวจสอบ/แก้ตัวเลขแล้วกดบันทึกได้เลย " +
+        "(หรือลบแถวที่ไม่ปลูกแล้วออกก่อนบันทึก)";
+    }
+    if (prevLivestock.length) {
+      document.getElementById("livestock-rows").innerHTML = "";
+      prevLivestock.forEach((l) => addLivestockRow(l.species, l.head_count));
+      document.getElementById("livestock-carry-note").textContent =
+        "ดึงรายการจากเดือน " + prevMonthLabel + " มาให้อัตโนมัติ — ตรวจสอบ/แก้จำนวนแล้วกดบันทึกได้เลย " +
+        "(หรือลบแถวที่ไม่มีแล้วออกก่อนบันทึก)";
+    }
+  } catch (err) {
+    // เงียบๆ พอ — carry-forward เป็นแค่ตัวช่วย ไม่ใช่ขั้นตอนบังคับ
   }
 }
 
@@ -170,13 +224,36 @@ function renderExistingCrops() {
     "<table><thead><tr><th>พืช</th><th>พื้นที่ปลูก</th></tr></thead><tbody>" + rows + "</tbody></table>";
 }
 
+function hasNoLivestockConfirmed() {
+  return existingLivestock.some((l) => l.species === NO_LIVESTOCK_SENTINEL);
+}
+
 function renderExistingLivestock() {
   const el = document.getElementById("livestock-existing");
-  if (!existingLivestock.length) {
+  const noLivestockBtn = document.getElementById("btn-no-livestock");
+  const addRowBtn = document.getElementById("btn-add-livestock-row");
+  const submitBtn = document.getElementById("btn-submit-livestock");
+
+  if (hasNoLivestockConfirmed()) {
+    el.innerHTML = '<p class="ok already-note">ยืนยันแล้วว่าหมู่บ้านนี้ไม่มีปศุสัตว์เดือนนี้ ✓ ' +
+      "(ถ้าข้อมูลเปลี่ยนไป กรุณาติดต่อ admin)</p>";
+    noLivestockBtn.disabled = true;
+    noLivestockBtn.textContent = "ยืนยันแล้วว่าไม่มีปศุสัตว์เดือนนี้ ✓";
+    addRowBtn.disabled = true;
+    submitBtn.disabled = true;
+    return;
+  }
+  noLivestockBtn.disabled = false;
+  noLivestockBtn.textContent = "หมู่บ้านนี้ไม่มีปศุสัตว์เดือนนี้ (ยืนยัน)";
+  addRowBtn.disabled = false;
+  submitBtn.disabled = false;
+
+  const realEntries = existingLivestock.filter((l) => l.species !== NO_LIVESTOCK_SENTINEL);
+  if (!realEntries.length) {
     el.innerHTML = '<p class="muted">ยังไม่มีรายงานปศุสัตว์ของเดือนนี้</p>';
     return;
   }
-  const rows = existingLivestock
+  const rows = realEntries
     .map((l) => "<tr><td>" + l.species + "</td><td>" + l.head_count.toLocaleString("th-TH") + " ตัว</td></tr>")
     .join("");
   el.innerHTML =
@@ -184,9 +261,34 @@ function renderExistingLivestock() {
     "<table><thead><tr><th>ชนิด</th><th>จำนวน</th></tr></thead><tbody>" + rows + "</tbody></table>";
 }
 
+document.getElementById("btn-no-livestock").addEventListener("click", async () => {
+  if (!currentVillage || !reportMonthValue) return;
+  const statusEl = document.getElementById("livestock-submit-status");
+  const btn = document.getElementById("btn-no-livestock");
+  statusEl.textContent = "";
+  btn.disabled = true;
+  try {
+    const res = await authFetch("/livestock-reports", {
+      method: "POST",
+      body: JSON.stringify({
+        village_id: currentVillage.village_id,
+        species: NO_LIVESTOCK_SENTINEL,
+        head_count: 0,
+        reported_month: reportMonthValue + "-01",
+      }),
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.detail || "บันทึกไม่สำเร็จ");
+    await loadExistingReports();
+  } catch (err) {
+    statusEl.innerHTML = '<span class="fail">บันทึกไม่สำเร็จ: ' + err.message + "</span>";
+    btn.disabled = false;
+  }
+});
+
 // ---------- แถวเพิ่มพืช ----------
 
-function addCropRow() {
+function addCropRow(prefillName, prefillArea) {
   cropRowCounter += 1;
   const id = "crop-row-" + cropRowCounter;
   const div = document.createElement("div");
@@ -194,12 +296,14 @@ function addCropRow() {
   div.id = id;
   div.innerHTML =
     '<div><label>ชื่อพืช</label><input type="text" class="crop-name-input" list="crop-name-suggestions" placeholder="เช่น ข้าว"></div>' +
-    '<div><label>พื้นที่ปลูก (ไร่)</label><input type="number" class="crop-area-input" min="0" step="0.01"></div>' +
+    '<div><label>พื้นที่ปลูก โดยประมาณ (ไร่)</label><input type="number" class="crop-area-input" min="0" step="0.01"></div>' +
     '<button type="button" class="secondary remove-row">ลบ</button>';
+  if (prefillName) div.querySelector(".crop-name-input").value = prefillName;
+  if (prefillArea !== undefined && prefillArea !== null) div.querySelector(".crop-area-input").value = prefillArea;
   div.querySelector(".remove-row").addEventListener("click", () => div.remove());
   document.getElementById("crop-rows").appendChild(div);
 }
-document.getElementById("btn-add-crop-row").addEventListener("click", addCropRow);
+document.getElementById("btn-add-crop-row").addEventListener("click", () => addCropRow());
 addCropRow(); // เริ่มด้วย 1 แถวว่างให้กรอกทันที
 
 document.getElementById("btn-submit-crops").addEventListener("click", async () => {
@@ -290,7 +394,7 @@ document.getElementById("btn-submit-crops").addEventListener("click", async () =
 
 // ---------- แถวเพิ่มปศุสัตว์ ----------
 
-function addLivestockRow() {
+function addLivestockRow(prefillSpecies, prefillCount) {
   livestockRowCounter += 1;
   const id = "livestock-row-" + livestockRowCounter;
   const div = document.createElement("div");
@@ -312,10 +416,20 @@ function addLivestockRow() {
   select.addEventListener("change", () => {
     otherInput.style.display = select.value === "__other__" ? "block" : "none";
   });
+  if (prefillSpecies) {
+    if (LIVESTOCK_SPECIES.includes(prefillSpecies)) {
+      select.value = prefillSpecies;
+    } else {
+      select.value = "__other__";
+      otherInput.style.display = "block";
+      otherInput.value = prefillSpecies;
+    }
+  }
+  if (prefillCount !== undefined && prefillCount !== null) div.querySelector(".livestock-count-input").value = prefillCount;
   div.querySelector(".remove-row").addEventListener("click", () => div.remove());
   document.getElementById("livestock-rows").appendChild(div);
 }
-document.getElementById("btn-add-livestock-row").addEventListener("click", addLivestockRow);
+document.getElementById("btn-add-livestock-row").addEventListener("click", () => addLivestockRow());
 addLivestockRow();
 
 document.getElementById("btn-submit-livestock").addEventListener("click", async () => {
@@ -323,6 +437,11 @@ document.getElementById("btn-submit-livestock").addEventListener("click", async 
   const statusEl = document.getElementById("livestock-submit-status");
   validationEl.textContent = "";
   statusEl.textContent = "";
+
+  if (hasNoLivestockConfirmed()) {
+    validationEl.textContent = "เดือนนี้ยืนยันไปแล้วว่าไม่มีปศุสัตว์ — ถ้าข้อมูลเปลี่ยนไป กรุณาติดต่อ admin";
+    return;
+  }
 
   const rows = Array.from(document.querySelectorAll("#livestock-rows .row-group"))
     .map((div) => {

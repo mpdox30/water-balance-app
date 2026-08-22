@@ -48,7 +48,20 @@
   <section id="step-crop" class="card step">
     <h2>2) พืชที่ปลูก</h2>
 
+    <details class="area-helper">
+      <summary class="muted">ไม่แน่ใจขนาดพื้นที่ปลูก? กดดูตัวช่วยกะคร่าวๆ</summary>
+      <ul class="muted" style="margin: 0.5rem 0 0; padding-left: 1.2rem;">
+        <li>1 ไร่ ≈ พื้นที่สี่เหลี่ยม 40 x 40 เมตร (1,600 ตร.ม.)</li>
+        <li>สนามฟุตบอลมาตรฐาน 1 สนาม ≈ 4.5 ไร่</li>
+        <li>สนามบาสเกตบอล 1 สนาม ≈ 0.27 ไร่</li>
+        <li>ถ้าแปลงเป็นรูปสี่เหลี่ยม ลองเดินนับก้าวตามความยาว/ความกว้าง (ก้าวผู้ใหญ่ 1 ก้าว ≈ 0.7-0.8 เมตร)
+        แล้วเอาความยาว x ความกว้าง (เมตร) หารด้วย 1,600 จะได้พื้นที่โดยประมาณเป็นไร่</li>
+        <li>ไม่ต้องเป๊ะ — กรอกเป็นตัวเลขกลมๆ ที่ใกล้เคียงที่สุดได้เลย ทศนิยมก็กรอกได้</li>
+      </ul>
+    </details>
+
     <div id="crop-existing"></div>
+    <div id="crop-carry-note" class="muted already-note"></div>
 
     <div id="crop-rows"></div>
     <button type="button" id="btn-add-crop-row" class="secondary">+ เพิ่มพืช</button>
@@ -61,6 +74,9 @@
     <h2>3) ปศุสัตว์</h2>
 
     <div id="livestock-existing"></div>
+    <div id="livestock-carry-note" class="muted already-note"></div>
+
+    <button type="button" id="btn-no-livestock" class="secondary">หมู่บ้านนี้ไม่มีปศุสัตว์เดือนนี้ (ยืนยัน)</button>
 
     <div id="livestock-rows"></div>
     <button type="button" id="btn-add-livestock-row" class="secondary">+ เพิ่มชนิดสัตว์</button>
