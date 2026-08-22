@@ -18,4 +18,9 @@ def get_conn():
     database_url = os.environ.get("DATABASE_URL")
     if not database_url:
         raise RuntimeError("DATABASE_URL is not set")
-    return psycopg.connect(database_url, connect_timeout=5, row_factory=dict_row)
+    # prepare_threshold=None: ปิด server-side prepared statement ของ psycopg3 — จำเป็นเพราะต่อผ่าน
+    # Supabase Transaction pooler (Supavisor) ที่สลับ backend connection ให้ทุก transaction ทำให้ชื่อ
+    # prepared statement ชนกันได้ (เจอจริงใน pipeline/db.py ตอนรัน backfill — ดูคอมเมนต์ที่นั่น) ยังไม่เจอ
+    # ในฝั่ง backend เพราะแต่ละ request เปิด/ปิด connection ใหม่ ไม่ทันถึง prepare_threshold เริ่มต้น (5)
+    # แต่เสี่ยงเกิดได้เหมือนกันถ้า traffic สูงขึ้น จึงปิดไว้ล่วงหน้าเพื่อความปลอดภัย
+    return psycopg.connect(database_url, connect_timeout=5, row_factory=dict_row, prepare_threshold=None)

@@ -12,7 +12,12 @@ def get_conn():
     database_url = os.environ.get("DATABASE_URL")
     if not database_url:
         raise RuntimeError("DATABASE_URL is not set")
-    return psycopg.connect(database_url, connect_timeout=10, row_factory=dict_row)
+    # prepare_threshold=None: ปิด server-side prepared statement ของ psycopg3 — จำเป็นเพราะเราต่อผ่าน
+    # Supabase Transaction pooler (Supavisor) ซึ่งสลับ backend connection ให้ทุก transaction ทำให้ชื่อ
+    # prepared statement (เช่น _pg3_0) ที่ psycopg เตรียมไว้บน connection object ไปชนกับสิ่งที่ backend
+    # จริงมีอยู่ — เจอจริงตอนรัน backfill 2568-08: psycopg.errors.DuplicatePreparedStatement เพราะสคริปต์นี้
+    # เปิด connection เดียวรันซ้ำหลายสิบครั้ง (ทุกหมู่บ้าน x ทุกตำบล) เกิน prepare_threshold ค่าเริ่มต้น (5)
+    return psycopg.connect(database_url, connect_timeout=10, row_factory=dict_row, prepare_threshold=None)
 
 
 def fetch_tambons(conn, only_pilot: bool = False) -> list[dict]:
