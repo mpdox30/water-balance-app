@@ -18,13 +18,18 @@
   #status { margin-top: 1.5rem; padding: 1rem; border-radius: 8px; border: 1px solid rgba(127,127,127,0.3); }
   .ok { color: #1a7f37; }
   .fail { color: #c0392b; }
+  button { font: inherit; padding: 0.6rem 1.1rem; border-radius: 6px; border: none;
+    background: #1a7f37; color: #fff; cursor: pointer; }
+  button:hover { background: #166430; }
 </style>
 </head>
 <body>
 <h1>ระบบสมดุลน้ำชุมชนระดับตำบล</h1>
 <p>
-  Placeholder หน้าแรก — Phase 0 (ตรวจการเชื่อมต่อ GitHub Pages → Render backend → Supabase)
-  หน้า dashboard จริงจะมาใน Phase 6 ตาม <code>00_docs/01-phased-work-plan.md</code>
+  พื้นที่นำร่อง ต.แม่นาเรือ อ.เมืองพะเยา จ.พะเยา — ดูสมดุลน้ำ 4 หมวด (บริโภค/อุปโภค/เกษตร/ปศุสัตว์) รายเดือนและรายหมู่บ้านได้ที่ dashboard ด้านล่าง
+</p>
+<p style="margin-top:1.5rem;">
+  <a href="dashboard.html"><button>เปิด Dashboard สมดุลน้ำ</button></a>
 </p>
 <div id="status">กำลังตรวจสอบการเชื่อมต่อ backend…</div>
 <p style="margin-top:1.5rem;">

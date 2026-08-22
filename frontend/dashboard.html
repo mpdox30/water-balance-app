@@ -1,0 +1,906 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>สมดุลน้ำชุมชนระดับตำบล — Dashboard</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0a0e14;
+    --panel: rgba(15,20,28,0.86);
+    --panel-solid: #10151d;
+    --panel-border: rgba(255,255,255,0.09);
+    --text: #e7ecf3;
+    --text-dim: rgba(231,236,243,0.62);
+    --text-faint: rgba(231,236,243,0.38);
+    --accent: #35d17e;
+    --accent-bg: rgba(53,209,126,0.16);
+    --accent-dim: rgba(53,209,126,0.55);
+    --fail: #ff5c6c;
+    --fail-bg: rgba(255,92,108,0.16);
+    --hair: rgba(255,255,255,0.08);
+    --cat-consumption: #57b6ff;
+    --cat-domestic: #b58bff;
+    --cat-agri: #ffb648;
+    --cat-livestock: #ff8ac0;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: "Sarabun", system-ui, sans-serif;
+    line-height: 1.5;
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+  }
+  a { color: var(--accent); }
+  input, select, button { font-family: inherit; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+
+  /* ---- top strip ---- */
+  .topbar {
+    display: flex; justify-content: space-between; align-items: center;
+    gap: 1rem; padding: 0.9rem 1.5rem 0.4rem;
+  }
+  .topbar h1 { font-size: 1.15rem; margin: 0; font-weight: 700; letter-spacing: 0.01em; }
+  .topbar .subtitle { font-size: 0.8em; color: var(--text-dim); margin: 0.2rem 0 0; }
+
+  /* ---- zone 3: map card (bounded block, center-top — like SIAHRA, not a full-page background) ---- */
+  .map-card-inner { position: relative; }
+  #map {
+    height: 440px; border-radius: 9px; background: #0a0e14;
+    border: 1px solid var(--panel-border);
+    /* สำคัญ: ต้องตั้ง z-index ให้ #map เอง ไม่ใช่แค่ position:relative (ที่ leaflet.css ตั้งให้อัตโนมัติ)
+       เพราะ position:relative เฉยๆ ไม่ได้สร้าง stacking context ใหม่ — ทำให้ z-index ภายในของ Leaflet เอง
+       (tile pane / marker pane / control ซึ่งอยู่ที่ 200-800) หลุดออกมาเทียบชั้นกับ .map-layer-filter (z-index:15)
+       ที่เป็น sibling กันตรงๆ แล้วทับจนแผงฟิลเตอร์หายไปทั้งแผ่น (ตามที่ผู้ใช้แจ้ง) ต้องตั้ง z-index ให้ #map
+       เพื่อกัน stacking context ของ Leaflet ไว้ในตัวเอง ไม่ให้หลุดออกมาเทียบกับ panel ข้างนอก */
+    position: relative;
+    z-index: 1;
+  }
+  .leaflet-control-layers, .leaflet-control-zoom {
+    filter: invert(1) hue-rotate(180deg) brightness(1.15);
+  }
+
+  /* ---- glass panels ---- */
+  .panel {
+    background: var(--panel);
+    backdrop-filter: blur(14px) saturate(140%);
+    -webkit-backdrop-filter: blur(14px) saturate(140%);
+    border: 1px solid var(--panel-border);
+    border-radius: 12px;
+    box-shadow: 0 8px 28px rgba(0,0,0,0.35);
+    padding: 0.85rem 1rem;
+  }
+
+  /* ---- overall 3-col layout — panels size to their own content, page scrolls when it's tall ---- */
+  .layout {
+    display: grid;
+    grid-template-columns: 18rem minmax(0,1fr) 20rem;
+    gap: 1rem;
+    padding: 0.6rem 1.5rem 3rem;
+    align-items: start;
+  }
+  @media (max-width: 68rem) {
+    .layout { grid-template-columns: 1fr; }
+  }
+  .col-left, .col-right { display: flex; flex-direction: column; gap: 1rem; }
+  .col-center { display: flex; flex-direction: column; gap: 1rem; min-width: 0; }
+
+  /* ---- layer filter — floats INSIDE the map card itself (a real "on the map" control) ---- */
+  .map-layer-filter {
+    position: absolute; z-index: 15; top: 0.7rem; left: 0.7rem; width: 12.5rem;
+    max-height: calc(100% - 1.4rem); overflow-y: auto;
+  }
+
+  h2.section-title {
+    font-size: 0.74rem; margin: 0 0 0.55rem; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700;
+    display: flex; align-items: center; gap: 0.4em;
+  }
+  h2.section-title .n { color: var(--accent); }
+  h3.sub-title { font-size: 0.82rem; margin: 0.85rem 0 0.35rem; color: var(--text-dim); font-weight: 600; }
+  h3.sub-title:first-child { margin-top: 0; }
+
+  .badge {
+    display: inline-block; padding: 0.16em 0.65em; border-radius: 999px;
+    font-size: 0.76em; background: var(--accent-bg); color: var(--accent); white-space: nowrap; font-weight: 600;
+  }
+  .badge.fail { background: var(--fail-bg); color: var(--fail); }
+  .badge.muted { background: rgba(255,255,255,0.08); color: var(--text-dim); }
+
+  /* ---- zone 1: tambon picker ---- */
+  #tambon-search {
+    width: 100%; padding: 0.42rem 0.6rem; border-radius: 7px; border: 1px solid var(--hair);
+    background: rgba(255,255,255,0.05); color: var(--text); font-size: 0.86em; margin-bottom: 0.55rem;
+  }
+  #tambon-search::placeholder { color: var(--text-faint); }
+  /* ล็อกความสูงเฉพาะกล่องเลือกตำบล (โซน 1) ให้แสดงพอดี ~3 รายการ เกินนั้นให้ scroll หรือค้นหาแทน —
+     กล่องอื่นๆ ไม่ล็อกความสูง ยืดตามเนื้อหา/หน้าเว็บ scroll ได้ตามปกติ */
+  .tambon-list-scroll { display: flex; flex-direction: column; gap: 0.35rem; max-height: 10.5rem; overflow-y: auto; }
+  .tambon-item {
+    display: block; width: 100%; text-align: left; cursor: pointer;
+    padding: 0.45rem 0.55rem; border-radius: 7px; border: 1px solid transparent;
+    background: rgba(255,255,255,0.03); color: inherit; font: inherit;
+  }
+  .tambon-item:hover { border-color: var(--accent-dim); }
+  .tambon-item.active { border-color: var(--accent); background: var(--accent-bg); }
+  .tambon-item .name { font-weight: 600; font-size: 0.9em; }
+  .tambon-item .loc { font-size: 0.76em; color: var(--text-faint); }
+
+  /* ---- zone 2: area info ---- */
+  .stat-row { display: flex; justify-content: space-between; gap: 0.5rem; font-size: 0.85em; padding: 0.26rem 0; border-bottom: 1px dashed var(--hair); }
+  .stat-row:last-child { border-bottom: none; }
+  .stat-row .v { font-variant-numeric: tabular-nums; font-weight: 600; text-align: right; }
+  .stat-row .k { color: var(--text-dim); }
+
+  /* ---- map layer filter (lives in the left overlay stack, on top of the map) ---- */
+  .layer-check { display: flex; align-items: center; gap: 0.5em; font-size: 0.82em; padding: 0.22rem 0; cursor: pointer; }
+  .layer-check input { accent-color: var(--accent); cursor: pointer; }
+  .layer-check .dot { display: inline-block; width: 0.7em; height: 0.7em; border-radius: 50%; flex: none; }
+
+  /* ---- zone 4: combined chart ---- */
+  .chart-filter { display: flex; gap: 0.35rem; flex-wrap: wrap; margin-bottom: 0.6rem; }
+  .chart-filter button {
+    padding: 0.32rem 0.7rem; border-radius: 999px; border: 1px solid var(--hair);
+    background: rgba(255,255,255,0.04); color: var(--text-dim); cursor: pointer; font-size: 0.8em; font-weight: 600;
+  }
+  .chart-filter button .dot { display: inline-block; width: 0.6em; height: 0.6em; border-radius: 50%; margin-right: 0.4em; vertical-align: middle; }
+  .chart-filter button.active { background: rgba(255,255,255,0.12); color: var(--text); border-color: rgba(255,255,255,0.3); }
+  .chart-wrap { overflow-x: auto; }
+  .facet-label { font-size: 0.74em; font-weight: 700; letter-spacing: 0.02em; }
+
+  /* ---- zone 5: annual overview ---- */
+  .headline-card {
+    padding: 0.75rem 0.9rem; margin-bottom: 0.75rem; border-radius: 10px;
+    background: rgba(255,255,255,0.05); border: 1px solid var(--hair);
+  }
+  .headline-card .head { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; }
+  .headline-card .head .label { font-weight: 700; font-size: 0.95em; }
+  .headline-card .nums { font-size: 0.86em; color: var(--text-dim); display: flex; flex-direction: column; gap: 0.28rem; }
+  .headline-card .nums .num-row { display: flex; justify-content: space-between; gap: 0.5em; align-items: baseline; }
+  .headline-card .nums .num-row span:last-child { font-variant-numeric: tabular-nums; color: var(--text); font-weight: 600; }
+  .headline-card .nums .num-row.total { border-top: 1px dashed var(--hair); padding-top: 0.32rem; margin-top: 0.1rem; }
+  .headline-card .nums .num-row.total span:last-child { font-size: 1.05em; }
+  .headline-card .nums .num-row.total span:last-child.pos { color: var(--accent); }
+  .headline-card .nums .num-row.total span:last-child.neg { color: var(--fail); }
+  .info-i {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 1.05em; height: 1.05em; border-radius: 50%; border: 1px solid var(--text-faint);
+    font-size: 0.7em; color: var(--text-faint); cursor: help; margin-left: 0.35em; vertical-align: middle;
+  }
+  .cat-card { padding: 0.6rem 0.75rem; margin-bottom: 0.5rem; border-radius: 9px; background: rgba(255,255,255,0.035); border: 1px solid var(--hair); }
+  .cat-card:last-of-type { margin-bottom: 0; }
+  .cat-card .head { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem; }
+  .cat-card .head .label { font-weight: 700; font-size: 0.88em; display: flex; align-items: center; gap: 0.45em; }
+  .cat-card .head .label .dot { display: inline-block; width: 0.65em; height: 0.65em; border-radius: 50%; }
+  .cat-card .nums { font-size: 0.8em; color: var(--text-dim); display: flex; flex-direction: column; gap: 0.18rem; }
+  .cat-card .nums .num-row { display: flex; justify-content: space-between; gap: 0.5em; }
+  .cat-card .nums .num-row span:last-child { font-variant-numeric: tabular-nums; color: var(--text); }
+  .cat-card .worst-month {
+    margin-top: 0.45rem; padding-top: 0.4rem; border-top: 1px dashed var(--hair);
+    font-size: 0.78em; color: var(--text-dim);
+  }
+  .cat-card .worst-month .wm-title { font-weight: 600; color: var(--text); margin-bottom: 0.2rem; }
+  .note-box { font-size: 0.74em; color: var(--text-faint); margin-top: 0.65rem; line-height: 1.5; }
+
+  .loading, .error-box, .empty-note { padding: 1rem; text-align: center; color: var(--text-dim); font-size: 0.85em; }
+  .error-box { color: var(--fail); }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div>
+    <h1>ระบบสมดุลน้ำชุมชนระดับตำบล</h1>
+    <p class="subtitle" id="dash-subtitle">กำลังโหลด…</p>
+  </div>
+  <div>
+    <a href="login.html" style="font-size:0.82em;">เข้าสู่ระบบ (สำหรับ admin / ตัวแทนหมู่บ้าน)</a>
+  </div>
+</div>
+
+<div class="layout">
+  <!-- 1: เลือกตำบล / 2: ข้อมูลพื้นที่ -->
+  <div class="col-left">
+    <div class="panel">
+      <h2 class="section-title"><span class="n">1</span> เลือกตำบล</h2>
+      <input type="search" id="tambon-search" placeholder="ค้นหาตำบล / อำเภอ / จังหวัด…">
+      <div class="tambon-list-scroll" id="tambon-list-items">
+        <div class="loading">กำลังโหลดรายชื่อตำบล…</div>
+      </div>
+    </div>
+    <div class="panel">
+      <h2 class="section-title"><span class="n">2</span> ข้อมูลพื้นที่ที่เลือก</h2>
+      <div id="area-info"><div class="empty-note">เลือกตำบลทางซ้ายเพื่อดูข้อมูล</div></div>
+    </div>
+  </div>
+
+  <!-- 3: แผนที่ตำบล (กล่องกลางบน มีขอบเขตชัดเจน ไม่ใช่พื้นหลังทั้งหน้า) / 4: กราฟสมดุลรายเดือน -->
+  <div class="col-center">
+    <div class="panel">
+      <h2 class="section-title"><span class="n">3</span> แผนที่ตำบล</h2>
+      <div class="map-card-inner">
+        <div id="map"></div>
+        <div class="map-layer-filter panel" id="layer-filter-panel">
+          <h2 class="section-title" style="margin-bottom:0.35rem;">ชั้นข้อมูล</h2>
+          <div id="layer-filter-body">
+            <div class="empty-note" style="padding:0.2rem 0; font-size:0.82em;">เลือกตำบลก่อน</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="panel">
+      <h2 class="section-title"><span class="n">4</span> สมดุลน้ำรายเดือน <span id="month-context" style="text-transform:none; letter-spacing:0; font-weight:400; color:var(--text-faint);"></span></h2>
+      <div class="chart-filter" id="chart-filter"></div>
+      <div class="chart-wrap"><svg id="chart" width="100%" height="230"></svg></div>
+    </div>
+    <div class="panel">
+      <h2 class="section-title"><span class="n">6</span> สถานะรายหมู่บ้าน — <span id="village-chart-cat-label">ทั้งหมด</span></h2>
+      <div class="chart-wrap"><svg id="village-chart" width="100%" height="230"></svg></div>
+    </div>
+  </div>
+
+  <!-- 5: สมดุลรายปีระดับตำบล -->
+  <div class="col-right">
+    <div class="panel">
+      <h2 class="section-title"><span class="n">5</span> สมดุลน้ำรายปีระดับตำบล</h2>
+      <div id="annual-overview"><div class="empty-note">เลือกตำบลทางซ้ายเพื่อดูข้อมูล</div></div>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// แก้ URL นี้เป็น URL จริงของ Render service
+const BACKEND_URL = "https://water-balance-app.onrender.com";
+
+const CATEGORY_LABEL = { consumption: "บริโภค (ดื่ม)", domestic: "อุปโภค (ใช้สอย)", agri: "เกษตร", livestock: "ปศุสัตว์" };
+const CATEGORY_LABEL_SHORT = { consumption: "บริโภค", domestic: "อุปโภค", agri: "เกษตร", livestock: "ปศุสัตว์" };
+const CATEGORY_COLOR = { consumption: "var(--cat-consumption)", domestic: "var(--cat-domestic)", agri: "var(--cat-agri)", livestock: "var(--cat-livestock)" };
+const CATEGORY_ORDER = ["consumption", "domestic", "agri", "livestock"];
+const SOURCE_TYPE_META = {
+  reservoir:           { color: "#2f8fe0", label: "อ่างเก็บน้ำ" },
+  small_water_source:  { color: "#6fb7ff", label: "แหล่งน้ำขนาดเล็ก" },
+  pond:                { color: "#43c3c3", label: "สระ/แก้มลิง" },
+  groundwater_well:    { color: "#c48f3f", label: "บ่อบาดาล" },
+  mountain_spring:     { color: "#2fd18f", label: "น้ำผุด/ตาน้ำ" },
+  purchased_external:  { color: "#9a9aa5", label: "ประปาซื้อภายนอก" },
+  weir:                { color: "#e08a2f", label: "ฝาย" },
+};
+const THAI_MONTHS = ["ม.ค.","ก.พ.","มี.ค.","เม.ย.","พ.ค.","มิ.ย.","ก.ค.","ส.ค.","ก.ย.","ต.ค.","พ.ย.","ธ.ค."];
+
+let state = {
+  tambons: [], currentTambon: null, villages: [], balance: null, waterSources: [], boundaries: {},
+  chartFilter: "all",        // "all" | one of CATEGORY_ORDER — controls zone 4 (chart) AND zone 6 (village table/map colors)
+  month: null, map: null, boundaryLayers: [], sourceLayers: [], loadToken: 0,
+  layerVisibility: { boundaries: true, types: {} }, // ควบคุมชั้นข้อมูลบนแผนที่ (จุด 5)
+};
+
+async function fetchJSON(path) {
+  const res = await fetch(`${BACKEND_URL}${path}`);
+  if (!res.ok) throw new Error(`${path} → HTTP ${res.status}`);
+  return res.json();
+}
+
+function thaiMonthLabel(iso) {
+  const d = new Date(iso + "T00:00:00Z");
+  return `${THAI_MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear() + 543}`;
+}
+
+function fmt(n) { return (n == null || Number.isNaN(n)) ? "—" : Math.round(n).toLocaleString(); }
+
+function escapeHtml(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+// ================= Zone 1: tambon picker =================
+
+async function loadTambonList() {
+  const listEl = document.getElementById("tambon-list-items");
+  try {
+    const tambons = await fetchJSON("/tambons");
+    state.tambons = tambons;
+    renderTambonList(tambons);
+    if (!tambons.length) {
+      listEl.innerHTML = `<div class="empty-note">ยังไม่มีตำบลในระบบ</div>`;
+      document.getElementById("dash-subtitle").textContent = "ยังไม่มีข้อมูลตำบล";
+      return;
+    }
+    const preferred = tambons.find(t => t.is_pilot) || tambons[0];
+    selectTambon(preferred.tambon_id);
+  } catch (err) {
+    listEl.innerHTML = `<div class="error-box">โหลดรายชื่อตำบลไม่สำเร็จ: ${escapeHtml(err.message)}<br>(เช็คว่า backend ตื่นอยู่ — Render free tier sleep หลังไม่มีคนเรียกสักพัก อาจต้องรอ 30-60 วิรอบแรก)</div>`;
+    document.getElementById("dash-subtitle").textContent = "โหลดข้อมูลไม่สำเร็จ";
+  }
+}
+
+function renderTambonList(tambons) {
+  const listEl = document.getElementById("tambon-list-items");
+  const q = (document.getElementById("tambon-search").value || "").trim();
+  const filtered = q
+    ? tambons.filter(t => [t.name_th, t.amphoe_th, t.province_th].some(s => (s || "").includes(q)))
+    : tambons;
+  if (!filtered.length) {
+    listEl.innerHTML = `<div class="empty-note">ไม่พบตำบลที่ค้นหา</div>`;
+    return;
+  }
+  listEl.innerHTML = filtered.map(t => `
+    <button class="tambon-item ${state.currentTambon && state.currentTambon.tambon_id === t.tambon_id ? "active" : ""}" data-tid="${t.tambon_id}">
+      <div class="name">${escapeHtml(t.name_th)}${t.is_pilot ? ' <span class="badge" style="margin-left:0.3em;">นำร่อง</span>' : ""}</div>
+      <div class="loc">${escapeHtml(t.amphoe_th)} · ${escapeHtml(t.province_th)}</div>
+    </button>
+  `).join("");
+  listEl.querySelectorAll(".tambon-item").forEach(btn => {
+    btn.addEventListener("click", () => selectTambon(btn.dataset.tid));
+  });
+}
+
+document.getElementById("tambon-search").addEventListener("input", () => renderTambonList(state.tambons));
+
+// ================= Selecting a tambon =================
+
+async function selectTambon(tambonId) {
+  const token = ++state.loadToken; // กันกรณีคลิกสลับตำบลเร็ว ๆ ให้ผลลัพธ์เก่าไม่มาทับของใหม่
+  renderTambonList(state.tambons); // update active highlight immediately (using stale tambon obj until load completes)
+  document.getElementById("area-info").innerHTML = `<div class="loading">กำลังโหลด…</div>`;
+  document.getElementById("annual-overview").innerHTML = `<div class="loading">กำลังโหลด…</div>`;
+  document.getElementById("village-chart").innerHTML = "";
+  document.getElementById("dash-subtitle").textContent = "กำลังโหลดข้อมูลตำบล…";
+
+  try {
+    const [tambon, villages, balance, waterSources] = await Promise.all([
+      fetchJSON(`/tambons/${tambonId}`),
+      fetchJSON(`/villages?tambon_id=${tambonId}`),
+      fetchJSON(`/balance?tambon_id=${tambonId}`),
+      fetchJSON(`/water-sources?tambon_id=${tambonId}`),
+    ]);
+    if (token !== state.loadToken) return; // ผู้ใช้เลือกตำบลอื่นระหว่างรออยู่แล้ว ทิ้งผลลัพธ์นี้
+
+    const boundaryEntries = await Promise.all(
+      villages.map(v => fetchJSON(`/village-boundary-parts?village_id=${v.village_id}`)
+        .then(parts => [v.village_id, parts])
+        .catch(() => [v.village_id, []]))
+    );
+    if (token !== state.loadToken) return;
+
+    state.currentTambon = tambon;
+    state.villages = villages;
+    state.balance = balance;
+    state.waterSources = waterSources;
+    state.boundaries = Object.fromEntries(boundaryEntries);
+    state.chartFilter = "all";
+    state.month = balance.available_months.length ? balance.available_months[balance.available_months.length - 1] : null;
+
+    renderTambonList(state.tambons);
+    renderAllForTambon();
+  } catch (err) {
+    if (token !== state.loadToken) return;
+    document.getElementById("area-info").innerHTML = `<div class="error-box">โหลดข้อมูลตำบลไม่สำเร็จ: ${escapeHtml(err.message)}</div>`;
+    document.getElementById("annual-overview").innerHTML = "";
+    document.getElementById("dash-subtitle").textContent = "โหลดข้อมูลไม่สำเร็จ";
+  }
+}
+
+function renderAllForTambon() {
+  const t = state.currentTambon;
+  document.getElementById("dash-subtitle").textContent =
+    `${t.name_th} · ${t.amphoe_th} · ${t.province_th} — ข้อมูล ET0/ฝน ${state.balance.available_months.length} เดือน`;
+  renderAreaInfo();
+  renderChartFilterButtons();
+  renderMap();
+  renderAnnualOverview();
+  renderAll();
+}
+
+// ================= Zone 2: area info =================
+
+function renderAreaInfo() {
+  const t = state.currentTambon;
+  const totalPop = state.villages.reduce((s, v) => s + (v.population || 0), 0);
+  const totalHh = state.villages.reduce((s, v) => s + (v.households || 0), 0);
+  const totalAgriRai = state.villages.reduce((s, v) => s + (v.agri_rai || 0), 0);
+  const totalRai = state.villages.reduce((s, v) => s + (v.total_rai || 0), 0);
+
+  const bySourceType = {};
+  state.waterSources.forEach(s => {
+    const entry = bySourceType[s.source_type] || { count: 0, capacity: 0 };
+    entry.count += 1;
+    entry.capacity += s.stored_capacity_m3 || 0;
+    bySourceType[s.source_type] = entry;
+  });
+  const sourceRows = Object.entries(bySourceType).map(([type, v]) => {
+    const meta = SOURCE_TYPE_META[type] || { label: type };
+    return `<div class="stat-row"><span class="k">${meta.label}</span><span class="v">${v.count} แห่ง${v.capacity ? ` (${fmt(v.capacity)} ลบ.ม.)` : ""}</span></div>`;
+  }).join("") || `<div class="empty-note" style="padding:0.4rem 0;">ยังไม่มีข้อมูลแหล่งน้ำ</div>`;
+
+  document.getElementById("area-info").innerHTML = `
+    <h3 class="sub-title">ที่ตั้ง</h3>
+    <div class="stat-row"><span class="k">ตำบล</span><span class="v">${escapeHtml(t.name_th)}</span></div>
+    <div class="stat-row"><span class="k">อำเภอ</span><span class="v">${escapeHtml(t.amphoe_th)}</span></div>
+    <div class="stat-row"><span class="k">จังหวัด</span><span class="v">${escapeHtml(t.province_th)}</span></div>
+    <div class="stat-row"><span class="k">พื้นที่รวม</span><span class="v">${t.area_km2 ?? "—"} ตร.กม.</span></div>
+    <div class="stat-row"><span class="k">จำนวนหมู่บ้าน</span><span class="v">${state.villages.length} หมู่</span></div>
+
+    <h3 class="sub-title">ประชากรและพื้นที่ใช้ประโยชน์</h3>
+    <div class="stat-row"><span class="k">ประชากรรวม</span><span class="v">${fmt(totalPop)} คน</span></div>
+    <div class="stat-row"><span class="k">ครัวเรือนรวม</span><span class="v">${fmt(totalHh)} หลัง</span></div>
+    <div class="stat-row"><span class="k">พื้นที่เกษตรรวม</span><span class="v">${fmt(totalAgriRai)} ไร่</span></div>
+    <div class="stat-row"><span class="k">พื้นที่สำรวจรวม</span><span class="v">${fmt(totalRai)} ไร่</span></div>
+
+    <h3 class="sub-title">แหล่งน้ำสำคัญ</h3>
+    ${sourceRows}
+  `;
+}
+
+// ================= Zone 4 filter (moved from topbar into the chart panel) =================
+
+function renderChartFilterButtons() {
+  const wrap = document.getElementById("chart-filter");
+  const btns = [`<button data-cat="all" class="${state.chartFilter === "all" ? "active" : ""}">ทั้งหมด</button>`]
+    .concat(CATEGORY_ORDER.map(cat => `
+      <button data-cat="${cat}" class="${state.chartFilter === cat ? "active" : ""}">
+        <span class="dot" style="background:${CATEGORY_COLOR[cat]}"></span>${CATEGORY_LABEL_SHORT[cat]}
+      </button>`));
+  wrap.innerHTML = btns.join("");
+  wrap.querySelectorAll("button").forEach(b => {
+    b.addEventListener("click", () => {
+      state.chartFilter = b.dataset.cat;
+      renderChartFilterButtons();
+      renderAll();
+    });
+  });
+}
+
+// สิ่งที่ต้องรีเฟรชทุกครั้งที่สลับตัวกรอง/เดือน (ไม่รวมสิ่งที่ผูกกับตำบลอย่างเดียว เช่น zone2/zone5)
+function renderAll() {
+  if (!state.currentTambon) return;
+  const label = state.chartFilter === "all" ? "ทั้งหมด" : CATEGORY_LABEL_SHORT[state.chartFilter];
+  document.getElementById("village-chart-cat-label").textContent = label;
+  document.getElementById("month-context").textContent = state.month ? `· เดือนที่เลือกในกราฟ: ${thaiMonthLabel(state.month)}` : "";
+  renderVillageChart();
+  renderChart();
+  updateMapColors();
+}
+
+function villageStatusFor(village, category, month) {
+  const cell = village.months?.[month]?.[category];
+  // ไม่มีข้อมูล = แสดงเป็นขาดแคลนเหมือนกันไปก่อน (แยกไม่ได้ว่าขาดข้อมูลหรือขาดน้ำจริง — รอสำรวจภาคสนาม)
+  if (!cell) return { status: "deficit", balance_cum: null, supply_cum: null, demand_cum: null };
+  return cell;
+}
+
+// เมื่อตัวกรองเป็น "ทั้งหมด" ใช้หมวดที่แย่ที่สุด (ขาดแคลนมากสุด) เป็นตัวแทนสถานะของหมู่บ้าน/ตำบลในตารางและสีแผนที่
+function worstCategoryStatus(monthsObj, month) {
+  const cellsAt = monthsObj?.[month];
+  if (!cellsAt) return { status: "deficit", balance_cum: null };
+  let worst = null;
+  CATEGORY_ORDER.forEach(cat => {
+    const c = cellsAt[cat];
+    if (!c) return;
+    if (!worst || c.balance_cum < worst.balance_cum) worst = c;
+  });
+  return worst || { status: "deficit", balance_cum: null };
+}
+
+function statusForFilter(monthsObj, month) {
+  if (state.chartFilter === "all") return worstCategoryStatus(monthsObj, month);
+  const cellsAt = monthsObj?.[month];
+  return cellsAt?.[state.chartFilter] || { status: "deficit", balance_cum: null };
+}
+
+// ================= Zone 5: annual tambon overview =================
+
+// ที่มาของ "ความจุน้ำต้นทุน" — สต็อกน้ำที่มีให้ใช้ร่วมกันทุกหมวด = ผลรวมความจุแหล่งน้ำระดับหมู่บ้านทุกแห่ง
+// + ความจุอ่างเก็บน้ำ/แหล่งน้ำระดับตำบล (water_storage_sources ที่ไม่ผูกกับหมู่บ้านใดหมู่บ้านหนึ่ง)
+function supplyBreakdown() {
+  const villageLevel = state.waterSources.filter(s => s.village_id != null).reduce((s, w) => s + (w.stored_capacity_m3 || 0), 0);
+  const tambonLevel = state.waterSources.filter(s => s.village_id == null).reduce((s, w) => s + (w.stored_capacity_m3 || 0), 0);
+  return { villageLevel, tambonLevel, total: villageLevel + tambonLevel };
+}
+
+function supplyInfoTooltip() {
+  const b = supplyBreakdown();
+  return `"ความจุน้ำต้นทุน" = ผลรวมความจุแหล่งน้ำระดับหมู่บ้านทุกแห่ง (${fmt(b.villageLevel)} ลบ.ม.) + ความจุอ่างเก็บน้ำ/แหล่งน้ำระดับตำบล (${fmt(b.tambonLevel)} ลบ.ม.) = ${fmt(b.total)} ลบ.ม. เป็นค่าความจุสะสม (สต็อก) ที่มีให้ใช้ร่วมกันทุกหมวด ไม่ใช่น้ำที่ไหลเข้าใหม่ทุกเดือน`;
+}
+
+// สรุปภาพรวมทั้งปีข้ามทุกหมวด — ใช้เป็นกล่องแรกสุดของโซน 5 ตามฟีดแบ็ก
+function annualHeadlineStats() {
+  const months = state.balance.available_months;
+  let totalDemand = 0, seenAny = false;
+  months.forEach(m => {
+    CATEGORY_ORDER.forEach(cat => {
+      const c = state.balance.tambon_overview.months[m]?.[cat];
+      if (!c) return;
+      seenAny = true;
+      totalDemand += c.demand_cum;
+    });
+  });
+  // น้ำต้นทุนเป็นสต็อกก้อนเดียวที่ใช้ร่วมกันทุกหมวด (ค่าเดียวกันไม่ว่าจะดูหมวดไหนในเดือนเดียวกัน) — ใช้ค่าจากเดือนล่าสุดที่มีข้อมูล
+  let combinedSupply = 0;
+  for (let i = months.length - 1; i >= 0; i--) {
+    const cellsAt = state.balance.tambon_overview.months[months[i]];
+    const c = cellsAt && (cellsAt.consumption || cellsAt.domestic || cellsAt.agri || cellsAt.livestock);
+    if (c) { combinedSupply = c.supply_cum; break; }
+  }
+  return { totalDemand, combinedSupply, diff: combinedSupply - totalDemand, seenAny };
+}
+
+function annualCategoryStats(cat) {
+  const months = state.balance.available_months;
+  let demandSum = 0, deficitMonths = 0, seenMonths = 0;
+  let latestSupply = 0;
+  let worstMonth = null; // เดือนที่ balance_cum ต่ำสุด (ตึงมือที่สุด) — ใช้เทียบ demand/supply ของเดือนเดียวกันแบบตรงไปตรงมา
+  months.forEach(m => {
+    const c = state.balance.tambon_overview.months[m]?.[cat];
+    if (!c) return;
+    seenMonths++;
+    demandSum += c.demand_cum;
+    if (c.status !== "surplus") deficitMonths++;
+    latestSupply = c.supply_cum; // supply เป็นค่าความจุ (stock) ไม่ใช่ flow สะสม — ใช้ค่าล่าสุดแทนการรวม
+    if (!worstMonth || c.balance_cum < worstMonth.balance_cum) worstMonth = { month: m, ...c };
+  });
+  return { demandSum, deficitMonths, seenMonths, latestSupply, avgDemand: seenMonths ? demandSum / seenMonths : 0, worstMonth };
+}
+
+function renderAnnualOverview() {
+  const totalStorage = state.waterSources.reduce((s, w) => s + (w.stored_capacity_m3 || 0), 0);
+  const hs = annualHeadlineStats();
+  const hsOk = hs.diff >= 0;
+  const infoTip = escapeHtml(supplyInfoTooltip());
+
+  const headline = !hs.seenAny ? "" : `
+    <div class="headline-card" style="border-color:${hsOk ? "rgba(53,209,126,0.4)" : "rgba(255,92,108,0.45)"};">
+      <div class="head">
+        <span class="label">ภาพรวมทั้งปี (ทุกหมวดรวมกัน)</span>
+        <span class="badge ${hsOk ? "" : "fail"}">${hsOk ? "เพียงพอ" : "ขาดแคลน"}</span>
+      </div>
+      <div class="nums">
+        <div class="num-row"><span>ความต้องการน้ำรวมทั้งปี</span><span>${fmt(hs.totalDemand)} ลบ.ม.</span></div>
+        <div class="num-row"><span>น้ำต้นทุน (ล่าสุด)<span class="info-i" title="${infoTip}">i</span></span><span>${fmt(hs.combinedSupply)} ลบ.ม.</span></div>
+        <div class="num-row total"><span>หักลบแล้ว</span><span class="${hsOk ? "pos" : "neg"}">${hs.diff >= 0 ? "+" : ""}${fmt(hs.diff)} ลบ.ม.</span></div>
+      </div>
+      <div class="note-box" style="margin-top:0.5rem;">
+        หมายเหตุ: เทียบผลรวมความต้องการทั้งปีกับสต็อกน้ำต้นทุนเดือนล่าสุดเพื่อภาพรวมคร่าวๆ เท่านั้น — น้ำต้นทุนเป็นสต็อกที่มีให้ใช้
+        หมุนเวียนทุกเดือน ไม่ได้ถูกใช้หมดไปทีละเดือนสะสม สถานะจริงรายเดือน/รายหมวดที่แม่นยำกว่า ดูได้จากการ์ดด้านล่างและตารางหมู่บ้าน
+      </div>
+    </div>`;
+
+  const cards = CATEGORY_ORDER.map(cat => {
+    const s = annualCategoryStats(cat);
+    const noData = s.seenMonths === 0;
+    const ok = !noData && s.deficitMonths === 0;
+    const wm = s.worstMonth;
+    const badgeClass = noData ? "muted" : (ok ? "" : "fail");
+    const badgeText = noData ? "ยังไม่มีข้อมูล" : (ok ? "เพียงพอทุกเดือน" : `ขาดแคลน ${s.deficitMonths}/${s.seenMonths} เดือน`);
+    return `
+      <div class="cat-card" style="border-color:${noData ? "var(--hair)" : (ok ? "rgba(53,209,126,0.35)" : "rgba(255,92,108,0.4)")};">
+        <div class="head">
+          <span class="label"><span class="dot" style="background:${CATEGORY_COLOR[cat]}"></span>${CATEGORY_LABEL[cat]}</span>
+          <span class="badge ${badgeClass}">${badgeText}</span>
+        </div>
+        <div class="nums">
+          <div class="num-row"><span>ความต้องการเฉลี่ย/เดือน</span><span>${fmt(s.avgDemand)} ลบ.ม.</span></div>
+          <div class="num-row"><span>ความจุน้ำต้นทุน (ล่าสุด)<span class="info-i" title="${infoTip}">i</span></span><span>${fmt(s.latestSupply)} ลบ.ม.</span></div>
+        </div>
+        ${wm ? `
+        <div class="worst-month">
+          <div class="wm-title">เดือนตึงมือที่สุด: ${thaiMonthLabel(wm.month)} (${wm.status === "surplus" ? "เพียงพอ" : "ขาดแคลน"})</div>
+          <div class="num-row" style="display:flex; justify-content:space-between;"><span>ความต้องการเดือนนั้น</span><span>${fmt(wm.demand_cum)} ลบ.ม.</span></div>
+          <div class="num-row" style="display:flex; justify-content:space-between;"><span>น้ำต้นทุนเดือนนั้น</span><span>${fmt(wm.supply_cum)} ลบ.ม.</span></div>
+        </div>` : ""}
+      </div>`;
+  }).join("");
+
+  document.getElementById("annual-overview").innerHTML = `
+    ${headline}
+    <h3 class="sub-title">แยกรายหมวด</h3>
+    ${cards}
+    <h3 class="sub-title">ข้อมูลตำบลเพิ่มเติม</h3>
+    <div class="stat-row"><span class="k">ปริมาณน้ำกักเก็บรวม (ทุกแหล่ง)</span><span class="v">${fmt(totalStorage)} ลบ.ม.</span></div>
+    <div class="stat-row"><span class="k">ความจุอ่างระดับตำบล</span><span class="v">${fmt(state.balance.tambon_overview.reservoir_capacity_m3)} ลบ.ม.</span></div>
+    <div class="stat-row"><span class="k">จำนวนแหล่งน้ำทั้งหมด</span><span class="v">${state.waterSources.length} แห่ง</span></div>
+  `;
+}
+
+// ================= Zone 6: village bar chart (สัดส่วนเดียวกับกราฟรายเดือน — แกน X เป็นหมู่บ้านแทนเดือน) =================
+
+function villageAnnualDeficitCount(village, statusFn) {
+  const months = state.balance.available_months;
+  let count = 0;
+  months.forEach(m => {
+    const s = statusFn(village.months, m);
+    if (!s || s.status !== "surplus") count++; // ไม่มีข้อมูล = นับเป็นขาดแคลนเหมือนกัน
+  });
+  return count;
+}
+
+function renderVillageChart() {
+  const svg = document.getElementById("village-chart");
+  const villages = [...state.villages].sort((a, b) => a.moo - b.moo);
+  if (!villages.length) {
+    svg.innerHTML = `<text x="10" y="20" font-size="12" fill="currentColor" opacity="0.6">ยังไม่มีข้อมูลหมู่บ้าน</text>`;
+    return;
+  }
+  const totalMonths = state.balance.available_months.length;
+  const statusFn = (monthsObj, m) => state.chartFilter === "all" ? worstCategoryStatus(monthsObj, m) : villageStatusFor({ months: monthsObj }, state.chartFilter, m);
+
+  const w = Math.max(svg.clientWidth || 700, villages.length * 74);
+  const h = 230; // สัดส่วนเดียวกับกราฟรายเดือน (โซน 4)
+  // ชื่อหมู่บ้านยาวและมีหลายหมู่กว่าจำนวนเดือน ป้ายแนวนอนแบบกราฟเดือนจะทับกัน — เอียงป้าย 55° แทน
+  // จึงต้องกัน padB ไว้เยอะกว่ากราฟเดือนมาก เพื่อให้ตัวหนังสือแนวเอียงมีที่พอ ไม่ล้นขอบล่าง
+  const padL = 46, padR = 12, padT = 10, padB = 92;
+  const plotH = h - padT - padB;
+  const zeroY = padT + plotH / 2;
+  const groupW = (w - padL - padR) / villages.length;
+  const barW = Math.min(28, groupW - 14);
+  const LABEL_ANGLE = -55;
+
+  const rows = villages.map(vRow => {
+    const v = state.balance.villages.find(bv => bv.village_id === vRow.village_id);
+    const cell = v ? statusFn(v.months, state.month) : { status: "deficit", balance_cum: null };
+    const deficitCount = v ? villageAnnualDeficitCount(v, statusFn) : totalMonths;
+    return { vRow, cell, deficitCount };
+  });
+  const maxAbs = Math.max(1, ...rows.map(r => r.cell.balance_cum != null ? Math.abs(r.cell.balance_cum) : 0));
+
+  let inner = `<line x1="${padL}" y1="${zeroY}" x2="${w - padR}" y2="${zeroY}" stroke="currentColor" stroke-opacity="0.25"/>
+    <text x="4" y="${zeroY + 4}" font-size="10" fill="currentColor" opacity="0.55">0</text>`;
+  rows.forEach((r, i) => {
+    const { vRow, cell, deficitCount } = r;
+    const cx = padL + i * groupW + groupW / 2;
+    const label = `หมู่ ${vRow.moo} ${vRow.name_th}`;
+    const tip = `${label}: ${cell.balance_cum != null ? (cell.balance_cum >= 0 ? "+" : "") + fmt(cell.balance_cum) + " ลบ.ม." : "ไม่มีข้อมูล"} — ขาดแคลน ${deficitCount}/${totalMonths} เดือนในรอบปี`;
+    if (cell.balance_cum != null) {
+      const bal = cell.balance_cum;
+      const barH = (Math.abs(bal) / maxAbs) * (plotH / 2 - 4);
+      const y = bal >= 0 ? zeroY - barH : zeroY;
+      const color = bal >= 0 ? "var(--accent)" : "var(--fail)";
+      inner += `<rect x="${cx - barW / 2}" y="${y}" width="${barW}" height="${Math.max(barH, 1)}" fill="${color}" opacity="0.85"><title>${escapeHtml(tip)}</title></rect>`;
+      const labelY = bal >= 0 ? y - 4 : y + barH + 12;
+      inner += `<text x="${cx}" y="${labelY}" font-size="10" text-anchor="middle" fill="currentColor" opacity="0.75">${bal >= 0 ? "+" : ""}${fmt(bal)}</text>`;
+    } else {
+      // ไม่มีข้อมูล — ทำจุดเล็กๆ ที่เส้นศูนย์แทนการเดาความสูงแท่ง พร้อม tooltip อธิบาย
+      inner += `<circle cx="${cx}" cy="${zeroY}" r="4" fill="var(--fail)" opacity="0.8"><title>${escapeHtml(tip)}</title></circle>`;
+    }
+    // ป้ายแกน X เอียง 55° ปลายข้อความชิดจุดใต้แท่ง (text-anchor:end) กันชื่อหมู่บ้านที่ยาวทับกันเวลาเรียงติดกันหลายหมู่
+    const tickX = cx, tickY = padT + plotH + 12;
+    inner += `<text x="${tickX}" y="${tickY}" font-size="10" text-anchor="end" fill="currentColor" opacity="0.75" transform="rotate(${LABEL_ANGLE} ${tickX} ${tickY})">${escapeHtml(String(vRow.moo))} ${escapeHtml(vRow.name_th)}</text>`;
+  });
+
+  svg.setAttribute("width", w);
+  svg.setAttribute("height", h);
+  svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+  svg.innerHTML = inner;
+}
+
+// ================= Zone 4: monthly balance chart (combined, filterable) =================
+// ค่าเริ่มต้น ("ทั้งหมด"): รวมบริโภค/อุปโภค/เกษตร/ปศุสัตว์ของแต่ละเดือนไว้ในแท่งเดียว — หมวดที่เกินพอต่อกันขึ้นด้านบนเส้นศูนย์
+// หมวดที่ขาดแคลนต่อกันลงด้านล่างเส้นศูนย์ แต่ละหมวดแยกสีตามปุ่มฟิลเตอร์ด้านบน — กดฟิลเตอร์หมวดใดหมวดหนึ่งจะเหลือแท่งเดียวของหมวดนั้น
+
+function singleCategoryBar(months, cat, w, h) {
+  const padL = 46, padR = 12, padT = 10, padB = 26;
+  const plotH = h - padT - padB;
+  const zeroY = padT + plotH / 2;
+  const vals = months.map(m => state.balance.tambon_overview.months[m]?.[cat]?.balance_cum).filter(v => v != null);
+  const maxAbs = Math.max(1, ...vals.map(v => Math.abs(v)));
+  const groupW = (w - padL - padR) / months.length;
+  const barW = Math.min(30, groupW - 12);
+
+  let inner = `<line x1="${padL}" y1="${zeroY}" x2="${w - padR}" y2="${zeroY}" stroke="currentColor" stroke-opacity="0.25"/>
+    <text x="4" y="${zeroY + 4}" font-size="10" fill="currentColor" opacity="0.55">0</text>`;
+  months.forEach((m, i) => {
+    const c = state.balance.tambon_overview.months[m]?.[cat];
+    const cx = padL + i * groupW + groupW / 2;
+    const isSelected = m === state.month;
+    if (c) {
+      const bal = c.balance_cum;
+      const barH = (Math.abs(bal) / maxAbs) * (plotH / 2 - 4);
+      const y = bal >= 0 ? zeroY - barH : zeroY;
+      const color = bal >= 0 ? "var(--accent)" : "var(--fail)";
+      inner += `<rect x="${cx - barW / 2}" y="${y}" width="${barW}" height="${Math.max(barH, 1)}" fill="${color}" opacity="${isSelected ? 1 : 0.68}" stroke="${isSelected ? "#fff" : "none"}" stroke-opacity="0.5" data-month="${m}" style="cursor:pointer;"/>`;
+      const labelY = bal >= 0 ? y - 4 : y + barH + 12;
+      inner += `<text x="${cx}" y="${labelY}" font-size="10" text-anchor="middle" fill="currentColor" opacity="0.75">${bal >= 0 ? "+" : ""}${fmt(bal)}</text>`;
+    }
+    inner += `<text x="${cx}" y="${h - 6}" font-size="10" text-anchor="middle" fill="currentColor" opacity="${isSelected ? 1 : 0.55}" font-weight="${isSelected ? 700 : 400}">${thaiMonthLabel(m)}</text>`;
+  });
+  return inner;
+}
+
+function combinedStackedBars(months, w, h) {
+  const padL = 46, padR = 12, padT = 10, padB = 26;
+  const plotH = h - padT - padB;
+  const zeroY = padT + plotH / 2;
+  const groupW = (w - padL - padR) / months.length;
+  const barW = Math.min(34, groupW - 12);
+
+  // สเกลรวม: หาผลรวม "ด้านบวก" และ "ด้านลบ" ของแต่ละเดือน (รวมทุกหมวดเข้าด้วยกันในทิศทางเดียวกัน) แล้วใช้ค่ามากสุดของทั้งปีเป็นสเกล
+  let maxAbs = 1;
+  months.forEach(m => {
+    let pos = 0, neg = 0;
+    CATEGORY_ORDER.forEach(cat => {
+      const bal = state.balance.tambon_overview.months[m]?.[cat]?.balance_cum;
+      if (bal == null) return;
+      if (bal >= 0) pos += bal; else neg += Math.abs(bal);
+    });
+    maxAbs = Math.max(maxAbs, pos, neg);
+  });
+
+  let inner = `<line x1="${padL}" y1="${zeroY}" x2="${w - padR}" y2="${zeroY}" stroke="currentColor" stroke-opacity="0.25"/>
+    <text x="4" y="${zeroY + 4}" font-size="10" fill="currentColor" opacity="0.55">0</text>`;
+  months.forEach((m, i) => {
+    const cx = padL + i * groupW + groupW / 2;
+    const isSelected = m === state.month;
+    let upY = zeroY, downY = zeroY; // จุดต่อของสแต็กฝั่งบวก/ฝั่งลบ ขยับออกจากเส้นศูนย์ทีละหมวด
+    CATEGORY_ORDER.forEach(cat => {
+      const c = state.balance.tambon_overview.months[m]?.[cat];
+      if (!c) return;
+      const bal = c.balance_cum;
+      const segH = Math.max((Math.abs(bal) / maxAbs) * (plotH / 2 - 4), bal === 0 ? 0 : 1);
+      if (segH <= 0) return;
+      let y;
+      if (bal >= 0) { y = upY - segH; upY = y; } else { y = downY; downY = downY + segH; }
+      inner += `<rect x="${cx - barW / 2}" y="${y}" width="${barW}" height="${segH}" fill="${CATEGORY_COLOR[cat]}" opacity="${isSelected ? 1 : 0.72}" stroke="${isSelected ? "#fff" : "none"}" stroke-opacity="0.45" data-month="${m}" style="cursor:pointer;"><title>${CATEGORY_LABEL_SHORT[cat]}: ${bal >= 0 ? "+" : ""}${fmt(bal)} ลบ.ม.</title></rect>`;
+    });
+    inner += `<text x="${cx}" y="${h - 6}" font-size="10" text-anchor="middle" fill="currentColor" opacity="${isSelected ? 1 : 0.55}" font-weight="${isSelected ? 700 : 400}">${thaiMonthLabel(m)}</text>`;
+  });
+  return inner;
+}
+
+function renderChart() {
+  const svg = document.getElementById("chart");
+  const months = state.balance.available_months;
+  if (!months.length) {
+    svg.innerHTML = `<text x="10" y="20" font-size="12" fill="currentColor" opacity="0.6">ยังไม่มีข้อมูลเดือนใดเลย</text>`;
+    return;
+  }
+  const w = Math.max(svg.clientWidth || 700, months.length * 60);
+  const h = 230;
+  svg.setAttribute("width", w);
+  svg.setAttribute("height", h);
+  svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+  svg.innerHTML = state.chartFilter === "all"
+    ? combinedStackedBars(months, w, h)
+    : singleCategoryBar(months, state.chartFilter, w, h);
+
+  svg.querySelectorAll("rect[data-month]").forEach(rect => {
+    rect.addEventListener("click", () => {
+      state.month = rect.dataset.month;
+      renderAll();
+    });
+  });
+}
+
+// ================= Zone 3: map =================
+
+function buildLayerFilterUI() {
+  const el = document.getElementById("layer-filter-body");
+  const types = Object.keys(state.layerVisibility.types);
+  if (!types.length) {
+    el.innerHTML = `<div class="empty-note" style="padding:0.3rem 0;">ไม่มีชั้นข้อมูลให้แสดง</div>`;
+    return;
+  }
+  el.innerHTML = `
+    <label class="layer-check">
+      <input type="checkbox" id="layer-toggle-boundaries" ${state.layerVisibility.boundaries ? "checked" : ""}>
+      <span class="dot" style="background:#8888ff;"></span> ขอบเขตหมู่บ้าน
+    </label>
+    ${types.map(t => `
+      <label class="layer-check">
+        <input type="checkbox" class="layer-toggle-type" data-type="${t}" ${state.layerVisibility.types[t] ? "checked" : ""}>
+        <span class="dot" style="background:${SOURCE_TYPE_META[t]?.color || "#999"}"></span> ${SOURCE_TYPE_META[t]?.label || t}
+      </label>`).join("")}
+  `;
+  document.getElementById("layer-toggle-boundaries").addEventListener("change", (e) => {
+    state.layerVisibility.boundaries = e.target.checked;
+    applyLayerVisibility();
+  });
+  el.querySelectorAll(".layer-toggle-type").forEach(cb => {
+    cb.addEventListener("change", (e) => {
+      state.layerVisibility.types[e.target.dataset.type] = e.target.checked;
+      applyLayerVisibility();
+    });
+  });
+}
+
+function applyLayerVisibility() {
+  if (!state.map) return;
+  state.boundaryLayers.forEach(layer => {
+    const shouldShow = state.layerVisibility.boundaries;
+    const onMap = state.map.hasLayer(layer);
+    if (shouldShow && !onMap) layer.addTo(state.map);
+    if (!shouldShow && onMap) state.map.removeLayer(layer);
+  });
+  state.sourceLayers.forEach(layer => {
+    const shouldShow = state.layerVisibility.types[layer.sourceType] !== false;
+    const onMap = state.map.hasLayer(layer);
+    if (shouldShow && !onMap) layer.addTo(state.map);
+    if (!shouldShow && onMap) state.map.removeLayer(layer);
+  });
+}
+
+function renderMap() {
+  const mapEl = document.getElementById("map");
+  try {
+    if (state.map) { state.map.remove(); state.map = null; }
+    // สำคัญ: ต้องตั้ง center/zoom เริ่มต้นตอนสร้าง map ทันที — ถ้าไม่ตั้งแล้วไป addLayer() ของ
+    // GeoJSON/polygon ก่อน map.fitBounds()/setView() ครั้งแรก จะพัง "Cannot read properties of
+    // undefined (reading 'min')" เพราะ Leaflet คำนวณ pixel bounds สำหรับ clip polygon ไม่ได้
+    const map = L.map("map", { center: [19.1, 99.9], zoom: 11, zoomControl: false });
+    state.map = map;
+    L.control.zoom({ position: "bottomright" }).addTo(map);
+
+    const streets = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "&copy; OpenStreetMap contributors", maxZoom: 19,
+    });
+    const satellite = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+      attribution: "Tiles &copy; Esri", maxZoom: 19,
+    });
+    satellite.addTo(map); // ดาวเทียมเป็นค่าเริ่มต้น ให้ฟีลแบบ SIAHRA
+    L.control.layers({ "ภาพถ่ายดาวเทียม": satellite, "แผนที่ถนน": streets }, {}, { position: "topright", collapsed: true }).addTo(map);
+
+    state.boundaryLayers = [];
+    state.sourceLayers = [];
+    state.layerVisibility.types = {};
+    const bounds = L.latLngBounds([]);
+
+    state.villages.forEach(v => {
+      const parts = state.boundaries[v.village_id] || [];
+      parts.forEach(p => {
+        if (!p || !p.geom_geojson) return;
+        try {
+          const layer = L.geoJSON(p.geom_geojson, { style: { weight: 1.5, fillOpacity: 0.3 } }).addTo(map);
+          layer.villageId = v.village_id;
+          layer.bindTooltip(`หมู่ ${v.moo} ${v.name_th}`);
+          state.boundaryLayers.push(layer);
+          const b = layer.getBounds();
+          if (b && b.isValid()) bounds.extend(b);
+        } catch (e) { /* geometry ผิดรูปแบบ — ข้ามไปหมู่บ้านถัดไป ไม่ให้ทั้งแผนที่พัง */ }
+      });
+    });
+
+    state.waterSources.forEach(s => {
+      if (s.lat == null || s.lon == null) return;
+      const meta = SOURCE_TYPE_META[s.source_type] || { color: "#999", label: s.source_type };
+      if (!(s.source_type in state.layerVisibility.types)) state.layerVisibility.types[s.source_type] = true;
+      const r = s.stored_capacity_m3 ? Math.min(14, 4 + Math.sqrt(s.stored_capacity_m3) / 15) : 5;
+      const marker = L.circleMarker([s.lat, s.lon], {
+        radius: r, color: meta.color, fillColor: meta.color, fillOpacity: 0.85, weight: 1,
+      }).addTo(map);
+      marker.sourceType = s.source_type;
+      marker.bindTooltip(`${s.name_th} (${meta.label}${s.stored_capacity_m3 ? ", " + fmt(s.stored_capacity_m3) + " ลบ.ม." : ""})`);
+      state.sourceLayers.push(marker);
+      try { bounds.extend([s.lat, s.lon]); } catch (e) { /* พิกัดผิดรูปแบบ */ }
+    });
+
+    buildLayerFilterUI();
+
+    if (bounds.isValid()) {
+      map.fitBounds(bounds, { padding: [16, 16] });
+    } else {
+      map.setView([19.1, 99.9], 11); // fallback: พะเยาโดยประมาณ — ยังไม่มีขอบเขต/พิกัดให้ fit
+    }
+  } catch (err) {
+    mapEl.innerHTML = `<div class="error-box">แสดงแผนที่ไม่สำเร็จ: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function updateMapColors() {
+  const statusFn = (monthsObj, m) => state.chartFilter === "all" ? worstCategoryStatus(monthsObj, m) : villageStatusFor({ months: monthsObj }, state.chartFilter, m);
+  state.boundaryLayers.forEach(layer => {
+    const v = state.balance.villages.find(bv => bv.village_id === layer.villageId);
+    const cell = v ? statusFn(v.months, state.month) : { status: "deficit" };
+    const deficit = cell.status !== "surplus";
+    layer.setStyle({ color: deficit ? "#ff5c6c" : "#35d17e", fillColor: deficit ? "#ff5c6c" : "#35d17e" });
+  });
+}
+
+loadTambonList();
+</script>
+</body>
+</html>
