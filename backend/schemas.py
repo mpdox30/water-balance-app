@@ -135,7 +135,7 @@ class VillageBoundaryPartResponse(BaseModel):
 class WaterSourceCreateRequest(BaseModel):
     tambon_id: str
     village_id: Optional[str] = None
-    source_type: Literal["pond", "reservoir", "groundwater_well", "mountain_spring", "purchased_external", "weir"]
+    source_type: Literal["pond", "reservoir", "groundwater_well", "mountain_spring", "purchased_external", "weir", "small_water_source"]
     name_th: str
     name_en: Optional[str] = None
     telemetry_code: Optional[str] = None
