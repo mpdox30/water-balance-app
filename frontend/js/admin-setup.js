@@ -148,7 +148,6 @@ document.getElementById("sel-province").addEventListener("change", (e) => {
   selTambon.innerHTML = '<option value="">-- เลือกตำบล --</option>';
   selTambon.disabled = true;
   document.getElementById("btn-load-boundary").disabled = true;
-  document.getElementById("tambon-upload-file").disabled = true;
   if (!e.target.value) {
     selAmphoe.disabled = true;
     return;
@@ -167,7 +166,6 @@ document.getElementById("sel-amphoe").addEventListener("change", (e) => {
   const selTambon = document.getElementById("sel-tambon");
   selTambon.innerHTML = '<option value="">-- เลือกตำบล --</option>';
   document.getElementById("btn-load-boundary").disabled = true;
-  document.getElementById("tambon-upload-file").disabled = true;
   if (!e.target.value) {
     selTambon.disabled = true;
     return;
@@ -186,7 +184,6 @@ document.getElementById("sel-amphoe").addEventListener("change", (e) => {
 
 document.getElementById("sel-tambon").addEventListener("change", (e) => {
   document.getElementById("btn-load-boundary").disabled = !e.target.value;
-  document.getElementById("tambon-upload-file").disabled = !e.target.value;
   document.getElementById("btn-confirm-tambon").disabled = true;
   document.getElementById("tambon-preview").textContent = "";
   document.getElementById("tambon-upload-status").textContent = "";
@@ -202,7 +199,12 @@ document.getElementById("tambon-upload-file").addEventListener("change", async (
   const province_th = document.getElementById("sel-province").value;
   const amphoe_th = document.getElementById("sel-amphoe").value;
   const tambon_th = document.getElementById("sel-tambon").value;
-  const officialRow = lookupTree[province_th][amphoe_th].find((r) => r.tambon_th === tambon_th);
+  if (!province_th || !amphoe_th || !tambon_th) {
+    statusEl.textContent = "กรุณาเลือกจังหวัด/อำเภอ/ตำบลให้ครบก่อนอัปโหลดไฟล์";
+    e.target.value = "";
+    return;
+  }
+  const officialRow = (lookupTree[province_th]?.[amphoe_th] || []).find((r) => r.tambon_th === tambon_th);
   statusEl.textContent = "กำลังอ่านไฟล์...";
   try {
     const fc = await parseGeoFile(file);

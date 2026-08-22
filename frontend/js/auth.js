@@ -34,7 +34,11 @@ function requireAdmin() {
   return auth;
 }
 
-/** wrapper รอบ fetch ที่ใส่ Authorization header ให้อัตโนมัติ + จัดการ token หมดอายุ (401) */
+/** wrapper รอบ fetch ที่ใส่ Authorization header ให้อัตโนมัติ + จัดการ token หมดอายุ (401)
+ * + ลองใหม่อัตโนมัติถ้า fetch() ล้มเหลวระดับ network ("Failed to fetch") — สาเหตุที่พบบ่อยที่สุด
+ * คือ backend ฟรี (Render) "หลับ" อยู่ (ไม่มีคนเรียกมา 15 นาที) request แรกหลังจากนั้นอาจโดน Render
+ * edge ตอบ 502 ระหว่างที่แอปยังบูตไม่เสร็จ (ไม่มี CORS header -> browser รายงานเป็น "Failed to fetch"
+ * แทนที่จะเป็น HTTP error ปกติ) จึงลองซ้ำเงียบๆ ก่อน throw จริง แทนที่จะให้ผู้ใช้ต้องกดปุ่มเองซ้ำๆ */
 async function authFetch(path, options = {}) {
   const auth = getAuth();
   const headers = Object.assign({}, options.headers || {}, {
@@ -43,13 +47,31 @@ async function authFetch(path, options = {}) {
   if (auth && auth.access_token) {
     headers["Authorization"] = "Bearer " + auth.access_token;
   }
-  const res = await fetch(BACKEND_URL + path, Object.assign({}, options, { headers }));
-  if (res.status === 401) {
-    clearAuth();
-    window.location.href = "login.html?next=" + encodeURIComponent(window.location.pathname);
-    throw new Error("session หมดอายุ กรุณา login ใหม่");
+  const fetchOptions = Object.assign({}, options, { headers });
+
+  const MAX_ATTEMPTS = 6; // รวมเวลารอสูงสุด ~30 วินาที ครอบคลุม cold start ของ Render free tier ส่วนใหญ่
+  let lastErr = null;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const res = await fetch(BACKEND_URL + path, fetchOptions);
+      if (res.status === 401) {
+        clearAuth();
+        window.location.href = "login.html?next=" + encodeURIComponent(window.location.pathname);
+        throw new Error("session หมดอายุ กรุณา login ใหม่");
+      }
+      return res;
+    } catch (err) {
+      if (err.message === "session หมดอายุ กรุณา login ใหม่") throw err;
+      lastErr = err;
+      if (attempt < MAX_ATTEMPTS) {
+        await new Promise((resolve) => setTimeout(resolve, 6000));
+      }
+    }
   }
-  return res;
+  throw new Error(
+    "เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ (เซิร์ฟเวอร์ฟรีอาจกำลังตื่นจากโหมด sleep ใช้เวลาถึง ~1 นาที) " +
+    "กรุณารอสักครู่แล้วลองกดปุ่มนี้อีกครั้ง — รายละเอียด: " + (lastErr ? lastErr.message : "ไม่ทราบสาเหตุ")
+  );
 }
 
 function logout() {
