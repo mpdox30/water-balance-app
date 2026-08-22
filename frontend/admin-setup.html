@@ -44,6 +44,12 @@
 
         <button id="btn-load-boundary" disabled>โหลดขอบเขตจากฐานข้อมูลกลาง</button>
         <div id="tambon-preview" class="muted" style="margin-top:0.5rem;"></div>
+
+        <div class="muted" style="margin-top:0.75rem;">— หรือ —</div>
+        <label for="tambon-upload-file">อัปโหลดขอบเขตตำบลเอง (ถ้ามีไฟล์ที่แม่นยำกว่าฐานข้อมูลกลาง)</label>
+        <input type="file" id="tambon-upload-file" accept=".zip,.geojson,.json,.kml" disabled>
+        <div id="tambon-upload-status" class="muted" style="margin-top:0.5rem;"></div>
+
         <button id="btn-confirm-tambon" class="secondary" disabled>ยืนยันสร้างตำบลนี้</button>
         <div id="tambon-status" class="muted" style="margin-top:0.5rem;"></div>
       </section>
@@ -69,6 +75,16 @@
           กำลังวาดขอบเขตให้ <strong id="draw-target-name"></strong> —
           กดปุ่มรูปหลายเหลี่ยม <span class="badge">⬠</span> มุมซ้ายบนของแผนที่ แล้ววาดตามขอบเขตจริง
         </div>
+
+        <div class="muted" style="margin-top:1rem;">— หรือ —</div>
+        <label for="village-upload-file">อัปโหลดขอบเขตหมู่บ้านทั้งตำบลจากไฟล์เดียว (ระบบจะช่วยจับคู่กับหมู่บ้านที่เพิ่มไว้ให้)</label>
+        <input type="file" id="village-upload-file" accept=".zip,.geojson,.json,.kml">
+        <div id="village-upload-status" class="muted" style="margin-top:0.5rem;"></div>
+        <table id="village-match-table" style="display:none;">
+          <thead><tr><th>รายการในไฟล์</th><th>พื้นที่ (ไร่)</th><th>จับคู่กับหมู่บ้าน</th><th>คำเตือน</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <button id="btn-confirm-village-upload" class="secondary" style="display:none;">ยืนยันนำเข้าทั้งหมด</button>
       </section>
 
       <section id="step3" class="card step">
@@ -98,6 +114,16 @@
           <thead><tr><th>ชื่อ</th><th>ประเภท</th><th>หมู่บ้าน</th></tr></thead>
           <tbody></tbody>
         </table>
+
+        <div class="muted" style="margin-top:1rem;">— หรือ —</div>
+        <label for="source-upload-file">อัปโหลดตำแหน่ง+รายละเอียดแหล่งน้ำจากไฟล์ (จุดหรือขอบเขตแหล่งน้ำ)</label>
+        <input type="file" id="source-upload-file" accept=".zip,.geojson,.json,.kml">
+        <div id="source-upload-status" class="muted" style="margin-top:0.5rem;"></div>
+        <table id="source-match-table" style="display:none;">
+          <thead><tr><th>ชื่อ</th><th>ประเภท</th><th>ความจุ (ลบ.ม.)</th><th>หมู่บ้าน</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <button id="btn-confirm-source-upload" class="secondary" style="display:none;">ยืนยันนำเข้าทั้งหมด</button>
       </section>
 
       <section id="step4" class="card step">
@@ -117,7 +143,11 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+<script src="https://unpkg.com/shpjs@4.0.4/dist/shp.js"></script>
+<script src="https://unpkg.com/@tmcw/togeojson@5.8.1/dist/togeojson.umd.js"></script>
+<script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
 <script src="js/auth.js"></script>
+<script src="js/geo-upload.js"></script>
 <script src="js/admin-setup.js"></script>
 </body>
 </html>

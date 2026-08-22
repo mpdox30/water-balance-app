@@ -17,13 +17,24 @@ let villages = []; // [{village_id, moo, name_th, area_rai}]
 let activeDrawVillageId = null;
 let pinMode = false;
 let pendingMarker = null;
+let villageGeometries = {}; // { [village_id]: [geojson geometry, ...] } — สะสมไว้เช็คทับซ้อนกัน (draw + upload)
+const OVERLAP_WARN_THRESHOLD_PCT = 15; // % ที่เริ่มเตือน (ไม่ block) ทั้งกรณีล้นนอกตำบล และทับกับหมู่บ้านอื่น
 
 // ---------- map setup ----------
 const map = L.map("map").setView([13.75, 100.5], 6); // เริ่มที่ตำแหน่งกลางประเทศไทย
-L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+
+// สลับแผนที่ถนน/ภาพถ่ายดาวเทียมได้ — ใช้ Esri World Imagery (ฟรี ไม่ต้องมี API key) เป็นชั้นดาวเทียม
+// เพื่อให้เห็นตำแหน่งแหล่งน้ำจริงชัดเจนตอนปักหมุด (ตามที่ขอเพิ่มใน Phase 3)
+const osmLayer = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
   attribution: "&copy; OpenStreetMap",
   maxZoom: 19,
-}).addTo(map);
+});
+const satelliteLayer = L.tileLayer(
+  "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+  { attribution: "Imagery &copy; Esri", maxZoom: 19 }
+);
+osmLayer.addTo(map);
+L.control.layers({ "แผนที่ถนน": osmLayer, "ภาพถ่ายดาวเทียม": satelliteLayer }, null, { position: "topright" }).addTo(map);
 
 const previewLayerGroup = L.layerGroup().addTo(map);
 const drawnVillageLayers = new L.FeatureGroup().addTo(map);
@@ -54,6 +65,7 @@ map.on(L.Draw.Event.CREATED, async (e) => {
     return;
   }
   const geojson = layer.toGeoJSON().geometry;
+  const warning = boundaryWarningText(geojson, activeDrawVillageId);
   try {
     const res = await authFetch("/village-boundary-parts", {
       method: "POST",
@@ -61,17 +73,46 @@ map.on(L.Draw.Event.CREATED, async (e) => {
     });
     const body = await res.json();
     if (!res.ok) throw new Error(body.detail || "บันทึกขอบเขตไม่สำเร็จ");
-    layer.bindPopup(villages.find((v) => v.village_id === activeDrawVillageId).name_th + " (" + body.area_rai + " ไร่)");
+    const vName = villages.find((v) => v.village_id === activeDrawVillageId).name_th;
+    layer.bindPopup(vName + " (" + body.area_rai + " ไร่)" + (warning ? " ⚠️ " + warning : ""));
     drawnVillageLayers.addLayer(layer);
+    recordVillageGeometry(activeDrawVillageId, geojson);
     const v = villages.find((x) => x.village_id === activeDrawVillageId);
     v.area_rai = (v.area_rai || 0) + body.area_rai;
     renderVillageTable();
     document.getElementById("draw-hint").style.display = "none";
+    if (warning) alert("บันทึกสำเร็จ แต่มีข้อควรระวัง: " + warning);
     activeDrawVillageId = null;
   } catch (err) {
     alert("บันทึกขอบเขตไม่สำเร็จ: " + err.message);
   }
 });
+
+/** เก็บ geometry ของหมู่บ้าน (ทั้งจากวาดมือและอัปโหลด) ไว้เช็คทับซ้อนกับหมู่บ้านอื่นในรอบถัดไป */
+function recordVillageGeometry(village_id, geom) {
+  villageGeometries[village_id] = villageGeometries[village_id] || [];
+  villageGeometries[village_id].push(geom);
+}
+
+/** เช็คว่า geometry นี้ล้นนอกตำบล หรือทับกับหมู่บ้านอื่นที่บันทึกไว้แล้วเกิน threshold ไหม
+ * คืนข้อความเตือน (string) หรือ null ถ้าไม่มีอะไรน่าห่วง — ไม่เคย block การบันทึก แค่เตือน */
+function boundaryWarningText(geom, forVillageId) {
+  const warnings = [];
+  if (currentTambonBoundaryGeojson) {
+    const outsidePct = percentOutside(geom, currentTambonBoundaryGeojson);
+    if (outsidePct !== null && outsidePct > OVERLAP_WARN_THRESHOLD_PCT) {
+      warnings.push("อยู่นอกขอบเขตตำบล ~" + outsidePct.toFixed(0) + "%");
+    }
+  }
+  const otherGeoms = Object.keys(villageGeometries)
+    .filter((vid) => vid !== forVillageId)
+    .flatMap((vid) => villageGeometries[vid]);
+  const overlapPct = percentOverlap(geom, otherGeoms);
+  if (overlapPct !== null && overlapPct > OVERLAP_WARN_THRESHOLD_PCT) {
+    warnings.push("ทับกับขอบเขตหมู่บ้านอื่น ~" + overlapPct.toFixed(0) + "%");
+  }
+  return warnings.length ? warnings.join(" และ ") : null;
+}
 
 map.on("click", (e) => {
   if (!pinMode) return;
@@ -107,6 +148,7 @@ document.getElementById("sel-province").addEventListener("change", (e) => {
   selTambon.innerHTML = '<option value="">-- เลือกตำบล --</option>';
   selTambon.disabled = true;
   document.getElementById("btn-load-boundary").disabled = true;
+  document.getElementById("tambon-upload-file").disabled = true;
   if (!e.target.value) {
     selAmphoe.disabled = true;
     return;
@@ -125,6 +167,7 @@ document.getElementById("sel-amphoe").addEventListener("change", (e) => {
   const selTambon = document.getElementById("sel-tambon");
   selTambon.innerHTML = '<option value="">-- เลือกตำบล --</option>';
   document.getElementById("btn-load-boundary").disabled = true;
+  document.getElementById("tambon-upload-file").disabled = true;
   if (!e.target.value) {
     selTambon.disabled = true;
     return;
@@ -143,10 +186,70 @@ document.getElementById("sel-amphoe").addEventListener("change", (e) => {
 
 document.getElementById("sel-tambon").addEventListener("change", (e) => {
   document.getElementById("btn-load-boundary").disabled = !e.target.value;
+  document.getElementById("tambon-upload-file").disabled = !e.target.value;
   document.getElementById("btn-confirm-tambon").disabled = true;
   document.getElementById("tambon-preview").textContent = "";
+  document.getElementById("tambon-upload-status").textContent = "";
+  document.getElementById("tambon-upload-file").value = "";
   previewLayerGroup.clearLayers();
   pendingLookupResult = null;
+});
+
+document.getElementById("tambon-upload-file").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const statusEl = document.getElementById("tambon-upload-status");
+  const province_th = document.getElementById("sel-province").value;
+  const amphoe_th = document.getElementById("sel-amphoe").value;
+  const tambon_th = document.getElementById("sel-tambon").value;
+  const officialRow = lookupTree[province_th][amphoe_th].find((r) => r.tambon_th === tambon_th);
+  statusEl.textContent = "กำลังอ่านไฟล์...";
+  try {
+    const fc = await parseGeoFile(file);
+    if (!fc.features.length) throw new Error("ไม่พบขอบเขตในไฟล์");
+    // ถ้ามีหลาย feature ในไฟล์ ใช้อันที่พื้นที่ใหญ่สุด (สมมติว่าเป็นขอบเขตตำบลหลัก)
+    let best = fc.features[0];
+    let bestArea = areaRai(best.geometry);
+    for (const f of fc.features.slice(1)) {
+      const a = areaRai(f.geometry);
+      if (a > bestArea) { best = f; bestArea = a; }
+    }
+    const coerced = toSinglePolygon(best.geometry);
+    if (!coerced.geom) throw new Error(coerced.note);
+    const geom = coerced.geom;
+    const areaKm2FromFile = (areaRai(geom) * 1600) / 1e6;
+    pendingLookupResult = {
+      province_th,
+      amphoe_th,
+      tambon_th,
+      name_en: officialRow ? officialRow.tambon_en : null,
+      area_km2: Math.round(areaKm2FromFile * 10000) / 10000,
+      area_km2_source: "อัปโหลดโดย admin (ไฟล์ " + file.name + ", Phase 3)",
+      geom_geojson: geom,
+    };
+    previewLayerGroup.clearLayers();
+    const layer = L.geoJSON(geom, { style: { color: "#c0392b", weight: 2, fillOpacity: 0.15 } });
+    previewLayerGroup.addLayer(layer);
+    map.fitBounds(layer.getBounds(), { padding: [20, 20] });
+
+    let warningHtml = "";
+    if (officialRow && officialRow.area_km2 > 0) {
+      const diffPct = (Math.abs(areaKm2FromFile - officialRow.area_km2) / officialRow.area_km2) * 100;
+      if (diffPct > 20) {
+        warningHtml =
+          ' <span class="fail">⚠️ พื้นที่จากไฟล์ (' + areaKm2FromFile.toFixed(2) + " ตร.กม.) ต่างจากค่าทางการ (" +
+          officialRow.area_km2.toFixed(2) + " ตร.กม.) ถึง " + diffPct.toFixed(0) +
+          "% — ตรวจสอบว่าเลือกตำบลถูกต้องหรือไฟล์ผิด แต่ยังบันทึกต่อได้ถ้ามั่นใจ</span>";
+      }
+    }
+    const coercedNote = coerced.note ? ' <span class="fail">⚠️ ' + coerced.note + "</span>" : "";
+    statusEl.innerHTML =
+      "พื้นที่จากไฟล์ที่อัปโหลด: <strong>" + areaKm2FromFile.toFixed(2) + " ตร.กม.</strong>" + coercedNote + warningHtml;
+    document.getElementById("tambon-preview").textContent = "";
+    document.getElementById("btn-confirm-tambon").disabled = false;
+  } catch (err) {
+    statusEl.textContent = "อ่านไฟล์ไม่สำเร็จ: " + err.message;
+  }
 });
 
 document.getElementById("btn-load-boundary").addEventListener("click", async () => {
@@ -273,6 +376,130 @@ document.getElementById("btn-add-village").addEventListener("click", async () =>
   }
 });
 
+// ---------- step 2b: อัปโหลดขอบเขตหมู่บ้านทั้งตำบลจากไฟล์ ----------
+let uploadedVillageFeatures = []; // [{geom, properties, area_rai}]
+
+document.getElementById("village-upload-file").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const statusEl = document.getElementById("village-upload-status");
+  statusEl.textContent = "กำลังอ่านไฟล์...";
+  try {
+    const fc = await parseGeoFile(file);
+    if (!fc.features.length) throw new Error("ไม่พบขอบเขตในไฟล์");
+    uploadedVillageFeatures = fc.features.map((f) => ({
+      geom: f.geometry,
+      properties: f.properties || {},
+      area_rai: areaRai(f.geometry),
+    }));
+    renderVillageMatchTable();
+    statusEl.textContent =
+      "อ่านไฟล์สำเร็จ พบ " + uploadedVillageFeatures.length + " รายการ — ตรวจสอบการจับคู่ในตารางด้านล่างก่อนยืนยัน";
+  } catch (err) {
+    statusEl.textContent = "อ่านไฟล์ไม่สำเร็จ: " + err.message;
+  }
+});
+
+function renderVillageMatchTable() {
+  const table = document.getElementById("village-match-table");
+  const tbody = table.querySelector("tbody");
+  tbody.innerHTML = "";
+  const confirmBtn = document.getElementById("btn-confirm-village-upload");
+  if (uploadedVillageFeatures.length === 0) {
+    table.style.display = "none";
+    confirmBtn.style.display = "none";
+    return;
+  }
+  table.style.display = "";
+  confirmBtn.style.display = "";
+
+  uploadedVillageFeatures.forEach((item, idx) => {
+    const guessedMoo = guessMoo(item.properties);
+    const guessedName = guessName(item.properties);
+    const label =
+      guessedName || guessedMoo
+        ? "หมู่ " + (guessedMoo ?? "?") + " " + (guessedName || "")
+        : "รายการที่ " + (idx + 1) + " (เดาชื่อ/หมู่ไม่ได้จากไฟล์)";
+
+    const tr = document.createElement("tr");
+    const tdLabel = document.createElement("td");
+    tdLabel.textContent = label;
+    const tdArea = document.createElement("td");
+    tdArea.textContent = item.area_rai.toFixed(1);
+
+    const tdMatch = document.createElement("td");
+    const sel = document.createElement("select");
+    const optSkip = document.createElement("option");
+    optSkip.value = "";
+    optSkip.textContent = "-- ข้าม --";
+    sel.appendChild(optSkip);
+    villages.forEach((v) => {
+      const opt = document.createElement("option");
+      opt.value = v.village_id;
+      opt.textContent = "หมู่ " + v.moo + " " + v.name_th;
+      if ((guessedMoo && guessedMoo === v.moo) || (guessedName && guessedName.trim() === v.name_th.trim())) {
+        opt.selected = true;
+      }
+      sel.appendChild(opt);
+    });
+    sel.dataset.idx = String(idx);
+    tdMatch.appendChild(sel);
+
+    const tdWarn = document.createElement("td");
+    tdWarn.className = "muted";
+
+    tr.appendChild(tdLabel);
+    tr.appendChild(tdArea);
+    tr.appendChild(tdMatch);
+    tr.appendChild(tdWarn);
+    tbody.appendChild(tr);
+  });
+}
+
+document.getElementById("btn-confirm-village-upload").addEventListener("click", async () => {
+  const statusEl = document.getElementById("village-upload-status");
+  const rows = document.querySelectorAll("#village-match-table tbody tr");
+  let successCount = 0;
+  for (const tr of rows) {
+    const sel = tr.querySelector("select");
+    const village_id = sel.value;
+    const warnTd = tr.children[3];
+    if (!village_id) continue;
+    const idx = parseInt(sel.dataset.idx, 10);
+    const item = uploadedVillageFeatures[idx];
+    const coerced = toSinglePolygon(item.geom);
+    if (!coerced.geom) {
+      warnTd.textContent = "✗ " + coerced.note;
+      warnTd.className = "fail";
+      continue;
+    }
+    const geomToSave = coerced.geom;
+    const warning = [coerced.note, boundaryWarningText(geomToSave, village_id)].filter(Boolean).join(" — ") || null;
+    try {
+      const res = await authFetch("/village-boundary-parts", {
+        method: "POST",
+        body: JSON.stringify({ village_id, part_label: null, geom_geojson: geomToSave }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.detail || "บันทึกไม่สำเร็จ");
+      recordVillageGeometry(village_id, geomToSave);
+      const v = villages.find((x) => x.village_id === village_id);
+      v.area_rai = (v.area_rai || 0) + body.area_rai;
+      const layer = L.geoJSON(geomToSave, { style: { color: "#1a7f37", weight: 2, fillOpacity: 0.15 } });
+      layer.bindPopup(v.name_th + " (" + body.area_rai + " ไร่, นำเข้าจากไฟล์)");
+      drawnVillageLayers.addLayer(layer);
+      warnTd.textContent = warning ? "⚠️ " + warning : "✓ บันทึกแล้ว";
+      warnTd.className = warning ? "fail" : "ok";
+      successCount++;
+    } catch (err) {
+      warnTd.textContent = "✗ " + err.message;
+      warnTd.className = "fail";
+    }
+  }
+  renderVillageTable();
+  statusEl.textContent = "นำเข้าสำเร็จ " + successCount + " รายการ";
+});
+
 // ---------- step 3: แหล่งน้ำ ----------
 document.getElementById("btn-pin-mode").addEventListener("click", () => {
   pinMode = !pinMode;
@@ -346,5 +573,147 @@ function addSourceRow(source, village_id) {
     "</td><td>" + villageLabel + "</td>";
   tbody.appendChild(tr);
 }
+
+// ---------- step 3b: อัปโหลดแหล่งน้ำจากไฟล์ ----------
+let uploadedSourceFeatures = []; // [{lat, lon, name_th, source_type, stored_capacity_m3}]
+const SOURCE_TYPE_LABELS = {
+  pond: "สระ",
+  reservoir: "อ่างเก็บน้ำ",
+  groundwater_well: "บ่อบาดาล",
+  mountain_spring: "น้ำผุดจากภูเขา",
+  purchased_external: "ซื้อน้ำจากภายนอก",
+};
+
+document.getElementById("source-upload-file").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const statusEl = document.getElementById("source-upload-status");
+  statusEl.textContent = "กำลังอ่านไฟล์...";
+  try {
+    const fc = await parseGeoFile(file);
+    if (!fc.features.length) throw new Error("ไม่พบตำแหน่งในไฟล์");
+    uploadedSourceFeatures = fc.features.map((f) => {
+      const { lat, lon } = centroidLatLon(f.geometry); // จุด -> ใช้ตรงๆ, polygon (เช่นอ่างเก็บน้ำ) -> ใช้จุดศูนย์กลาง
+      return {
+        lat,
+        lon,
+        name_th: guessName(f.properties) || "",
+        source_type: guessSourceType(f.properties) || "pond",
+        stored_capacity_m3: guessCapacity(f.properties),
+      };
+    });
+    renderSourceMatchTable();
+    statusEl.textContent =
+      "อ่านไฟล์สำเร็จ พบ " + uploadedSourceFeatures.length + " รายการ — ตรวจสอบ/แก้ไขในตารางก่อนยืนยัน";
+  } catch (err) {
+    statusEl.textContent = "อ่านไฟล์ไม่สำเร็จ: " + err.message;
+  }
+});
+
+function renderSourceMatchTable() {
+  const table = document.getElementById("source-match-table");
+  const tbody = table.querySelector("tbody");
+  tbody.innerHTML = "";
+  const confirmBtn = document.getElementById("btn-confirm-source-upload");
+  if (uploadedSourceFeatures.length === 0) {
+    table.style.display = "none";
+    confirmBtn.style.display = "none";
+    return;
+  }
+  table.style.display = "";
+  confirmBtn.style.display = "";
+
+  uploadedSourceFeatures.forEach((item, idx) => {
+    const tr = document.createElement("tr");
+    tr.dataset.idx = String(idx);
+
+    const tdName = document.createElement("td");
+    const inputName = document.createElement("input");
+    inputName.type = "text";
+    inputName.value = item.name_th;
+    inputName.dataset.field = "name_th";
+    tdName.appendChild(inputName);
+
+    const tdType = document.createElement("td");
+    const selType = document.createElement("select");
+    Object.keys(SOURCE_TYPE_LABELS).forEach((key) => {
+      const opt = document.createElement("option");
+      opt.value = key;
+      opt.textContent = SOURCE_TYPE_LABELS[key];
+      if (key === item.source_type) opt.selected = true;
+      selType.appendChild(opt);
+    });
+    selType.dataset.field = "source_type";
+    tdType.appendChild(selType);
+
+    const tdCap = document.createElement("td");
+    const inputCap = document.createElement("input");
+    inputCap.type = "number";
+    inputCap.min = "0";
+    if (item.stored_capacity_m3 !== null) inputCap.value = item.stored_capacity_m3;
+    inputCap.dataset.field = "stored_capacity_m3";
+    tdCap.appendChild(inputCap);
+
+    const tdVillage = document.createElement("td");
+    const selVillage = document.createElement("select");
+    const optNone = document.createElement("option");
+    optNone.value = "";
+    optNone.textContent = "-- ระดับตำบล --";
+    selVillage.appendChild(optNone);
+    villages.forEach((v) => {
+      const opt = document.createElement("option");
+      opt.value = v.village_id;
+      opt.textContent = "หมู่ " + v.moo + " " + v.name_th;
+      selVillage.appendChild(opt);
+    });
+    selVillage.dataset.field = "village_id";
+    tdVillage.appendChild(selVillage);
+
+    tr.appendChild(tdName);
+    tr.appendChild(tdType);
+    tr.appendChild(tdCap);
+    tr.appendChild(tdVillage);
+    tbody.appendChild(tr);
+  });
+}
+
+document.getElementById("btn-confirm-source-upload").addEventListener("click", async () => {
+  const statusEl = document.getElementById("source-upload-status");
+  const rows = document.querySelectorAll("#source-match-table tbody tr");
+  let successCount = 0;
+  for (const tr of rows) {
+    const idx = parseInt(tr.dataset.idx, 10);
+    const item = uploadedSourceFeatures[idx];
+    const name_th = tr.querySelector('[data-field="name_th"]').value.trim();
+    const source_type = tr.querySelector('[data-field="source_type"]').value;
+    const capacityRaw = tr.querySelector('[data-field="stored_capacity_m3"]').value;
+    const village_id = tr.querySelector('[data-field="village_id"]').value || null;
+    if (!name_th) continue;
+    try {
+      const res = await authFetch("/water-sources", {
+        method: "POST",
+        body: JSON.stringify({
+          tambon_id: currentTambonId,
+          village_id,
+          source_type,
+          name_th,
+          lat: item.lat,
+          lon: item.lon,
+          stored_capacity_m3: capacityRaw ? parseFloat(capacityRaw) : null,
+          capacity_source_note: capacityRaw ? "นำเข้าจากไฟล์อัปโหลด (Phase 3)" : null,
+        }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.detail || "บันทึกไม่สำเร็จ");
+      sourceMarkersGroup.addLayer(L.marker([item.lat, item.lon]).bindPopup(body.name_th));
+      addSourceRow(body, village_id);
+      successCount++;
+    } catch (err) {
+      alert('แถว "' + name_th + '" บันทึกไม่สำเร็จ: ' + err.message);
+    }
+  }
+  document.getElementById("step4").classList.add("active");
+  statusEl.textContent = "นำเข้าสำเร็จ " + successCount + " รายการ";
+});
 
 loadLookupData();
