@@ -34,6 +34,18 @@ function requireAdmin() {
   return auth;
 }
 
+/** เรียกจากหน้าที่ต้อง login ก่อนถึงจะใช้ได้ แต่ role อะไรก็ได้ (admin หรือ village_rep) เช่น
+ * หน้ารายงานพืช/ปศุสัตว์รายเดือน (report.html, Phase 4) — สิทธิ์จริงเช็คที่ backend อีกชั้น
+ * (village_rep เขียนได้แค่หมู่บ้านตัวเอง, admin เขียนได้ทุกหมู่บ้าน — ดู check_can_write_village) */
+function requireAuth() {
+  const auth = getAuth();
+  if (!auth || !auth.access_token) {
+    window.location.href = "login.html?next=" + encodeURIComponent(window.location.pathname);
+    return null;
+  }
+  return auth;
+}
+
 /** wrapper รอบ fetch ที่ใส่ Authorization header ให้อัตโนมัติ + จัดการ token หมดอายุ (401)
  * + ลองใหม่อัตโนมัติถ้า fetch() ล้มเหลวระดับ network ("Failed to fetch") — สาเหตุที่พบบ่อยที่สุด
  * คือ backend ฟรี (Render) "หลับ" อยู่ (ไม่มีคนเรียกมา 15 นาที) request แรกหลังจากนั้นอาจโดน Render

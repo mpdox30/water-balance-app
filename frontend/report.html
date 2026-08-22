@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>รายงานพืช/ปศุสัตว์รายเดือน — ระบบสมดุลน้ำชุมชนระดับตำบล</title>
+<link rel="stylesheet" href="css/style.css">
+<style>
+  .row-group { display: flex; gap: 0.5rem; align-items: flex-end; margin-top: 0.75rem; }
+  .row-group > div { flex: 1; min-width: 0; }
+  .row-group label { margin-top: 0; }
+  .row-group button.remove-row { flex: 0 0 auto; margin-top: 0.25rem; padding: 0.5rem 0.7rem; }
+  .already-note { margin-top: 0.5rem; }
+  .month-badge { display: inline-block; font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <strong>รายงานพืช/ปศุสัตว์รายเดือน</strong>
+  <div>
+    <span id="whoami" class="muted"></span>
+    <button class="secondary" onclick="logout()" style="margin-top:0; margin-left:0.75rem;">ออกจากระบบ</button>
+  </div>
+</div>
+
+<div class="page">
+
+  <section id="step-village" class="card">
+    <h2>1) หมู่บ้าน + เดือนที่รายงาน</h2>
+
+    <div id="admin-village-picker" style="display:none;">
+      <p class="muted">คุณ login เป็น admin — เลือกหมู่บ้านที่จะกรอกแทนได้ (ปกติตัวแทนหมู่บ้านจะไม่เห็นช่องนี้
+      เพราะระบบผูกหมู่บ้านให้อัตโนมัติจากบัญชีที่ login)</p>
+      <label for="sel-tambon-r">ตำบล</label>
+      <select id="sel-tambon-r"><option value="">-- เลือกตำบล --</option></select>
+      <label for="sel-village-r">หมู่บ้าน</label>
+      <select id="sel-village-r" disabled><option value="">-- เลือกหมู่บ้าน --</option></select>
+    </div>
+
+    <div id="village-info" class="muted" style="margin-top:0.75rem;"></div>
+
+    <label for="report-month">เดือนที่รายงาน</label>
+    <input type="month" id="report-month">
+
+    <div id="village-month-status" class="muted" style="margin-top:0.5rem;"></div>
+  </section>
+
+  <section id="step-crop" class="card step">
+    <h2>2) พืชที่ปลูก</h2>
+
+    <div id="crop-existing"></div>
+
+    <div id="crop-rows"></div>
+    <button type="button" id="btn-add-crop-row" class="secondary">+ เพิ่มพืช</button>
+    <div id="crop-validation" class="fail muted" style="margin-top:0.5rem;"></div>
+    <button type="button" id="btn-submit-crops">บันทึกรายงานพืช</button>
+    <div id="crop-submit-status" class="muted" style="margin-top:0.5rem;"></div>
+  </section>
+
+  <section id="step-livestock" class="card step">
+    <h2>3) ปศุสัตว์</h2>
+
+    <div id="livestock-existing"></div>
+
+    <div id="livestock-rows"></div>
+    <button type="button" id="btn-add-livestock-row" class="secondary">+ เพิ่มชนิดสัตว์</button>
+    <div id="livestock-validation" class="fail muted" style="margin-top:0.5rem;"></div>
+    <button type="button" id="btn-submit-livestock">บันทึกรายงานปศุสัตว์</button>
+    <div id="livestock-submit-status" class="muted" style="margin-top:0.5rem;"></div>
+  </section>
+
+  <section id="step-done" class="card step">
+    <h2>4) เสร็จสิ้น</h2>
+    <p>ขอบคุณที่กรอกรายงานเดือนนี้ — ข้อมูลจะถูกใช้คำนวณสมดุลน้ำของหมู่บ้านคุณ (Phase 5) ถ้าต้องการแก้ไข
+    รายการที่ส่งไปแล้ว กรุณาติดต่อ admin ของระบบโดยตรง (ระบบยังไม่มีปุ่มแก้ไข/ลบด้วยตัวเอง เพื่อกันข้อมูลผิดพลาด
+    จากการแก้ไขซ้อนกัน)</p>
+    <a href="index.html"><button class="secondary">กลับหน้าแรก</button></a>
+  </section>
+
+</div>
+
+<datalist id="crop-name-suggestions">
+  <option value="ข้าว"></option>
+  <option value="ข้าวโพดเลี้ยงสัตว์"></option>
+  <option value="อ้อย"></option>
+  <option value="มันสำปะหลัง"></option>
+  <option value="ยางพารา"></option>
+  <option value="ปาล์มน้ำมัน"></option>
+  <option value="ผักสวนครัว"></option>
+  <option value="ไม้ผล"></option>
+  <option value="พืชไร่อื่นๆ"></option>
+</datalist>
+
+<script src="js/auth.js"></script>
+<script src="js/report.js"></script>
+</body>
+</html>
