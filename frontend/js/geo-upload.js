@@ -9,7 +9,8 @@
 //   @tmcw/togeojson — แปลง KML -> GeoJSON
 //   @turf/turf v6   — คำนวณพื้นที่/intersect สำหรับเตือน (ไม่ block) กรณีขอบเขตไม่แนบสนิท
 
-/** อ่านไฟล์ที่ admin เลือก (.zip / .geojson / .json / .kml) แล้วคืนเป็น GeoJSON FeatureCollection เสมอ */
+/** อ่านไฟล์ที่ admin เลือก (.zip / .geojson / .json / .kml) แล้วคืนเป็น GeoJSON FeatureCollection เสมอ
+ * (2D ล้วน — ดู stripZ ด้านล่างว่าทำไมต้องตัดค่าความสูง/Z ทิ้งเสมอ) */
 async function parseGeoFile(file) {
   const name = file.name.toLowerCase();
   let raw;
@@ -25,7 +26,11 @@ async function parseGeoFile(file) {
   } else {
     throw new Error("รองรับเฉพาะไฟล์ .zip (shapefile), .geojson/.json, หรือ .kml");
   }
-  return normalizeToFeatureCollection(raw);
+  const fc = normalizeToFeatureCollection(raw);
+  fc.features.forEach((f) => {
+    if (f.geometry) f.geometry = force2D(f.geometry);
+  });
+  return fc;
 }
 
 function normalizeToFeatureCollection(geojson) {
@@ -37,6 +42,24 @@ function normalizeToFeatureCollection(geojson) {
   if (geojson.type === "FeatureCollection") return geojson;
   if (geojson.type === "Feature") return { type: "FeatureCollection", features: [geojson] };
   return { type: "FeatureCollection", features: [{ type: "Feature", properties: {}, geometry: geojson }] };
+}
+
+/** ตัดพิกัดทุกจุดให้เหลือแค่ [lon, lat] (2 ค่า) เสมอ — ไฟล์ KML ที่ export จาก Google Earth Pro
+ * มักติดค่าความสูง (altitude) มาด้วยเป็นค่าที่ 3 ของทุกจุดพิกัด (เช่น "100.30,16.62,0") ซึ่ง
+ * @tmcw/togeojson จะแปลงเป็น geometry แบบ 3 มิติ (เช่น PolygonZ) ตรงๆ — ฐานข้อมูลฝั่งเรา
+ * ประกาศคอลัมน์เป็น geometry(Polygon, 4326) แบบ 2 มิติล้วนเท่านั้น ถ้าส่ง geometry 3 มิติเข้าไป
+ * Postgres/PostGIS จะ reject การ insert ทันที (unhandled exception -> 500 -> ไม่มี CORS header ->
+ * browser รายงานเป็น "Failed to fetch"/CORS error แทนที่จะเป็น error message ที่อ่านเข้าใจได้)
+ * จึงต้องตัดทิ้งเสมอไม่ว่าไฟล์ต้นทางจะมี Z หรือไม่ก็ตาม (ปลอดภัย — พื้นที่ตำบล/หมู่บ้าน/แหล่งน้ำ
+ * ไม่ต้องใช้ความสูงอยู่แล้ว) */
+function stripZ(coords) {
+  if (typeof coords[0] === "number") return coords.slice(0, 2);
+  return coords.map(stripZ);
+}
+
+function force2D(geometry) {
+  if (!geometry || !geometry.coordinates) return geometry;
+  return Object.assign({}, geometry, { coordinates: stripZ(geometry.coordinates) });
 }
 
 /** % พื้นที่ของ geom ที่อยู่ "นอก" containerGeom (0 = อยู่ในสนิท, 100 = อยู่นอกทั้งหมด)
