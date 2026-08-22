@@ -14,6 +14,7 @@ import json
 import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+import thai_admin_boundary
 from db import get_conn
 from schemas import (
     CropReportCreateRequest,
@@ -24,8 +25,12 @@ from schemas import (
     LoginResponse,
     TambonCreateRequest,
     TambonResponse,
+    ThaiTambonLookupRequest,
+    ThaiTambonLookupResponse,
     UserCreateRequest,
     UserResponse,
+    VillageBoundaryPartCreateRequest,
+    VillageBoundaryPartResponse,
     VillageCreateRequest,
     VillageResponse,
     WaterSourceCreateRequest,
@@ -194,6 +199,34 @@ def create_tambon(body: TambonCreateRequest, _admin: dict = Depends(require_admi
 
 
 # ============================================================
+# Thai nationwide admin boundary lookup (Phase 3 — เพิ่มตำบลใหม่นอกแม่นาเรือ)
+# ============================================================
+
+@router.post("/admin/thai-tambon-lookup", response_model=ThaiTambonLookupResponse)
+def lookup_thai_tambon(body: ThaiTambonLookupRequest, _admin: dict = Depends(require_admin)):
+    """หา geometry ตำบลจากฐานข้อมูลทั้งประเทศ (THA_Tambon.shp, ดู thai_admin_boundary.py) —
+    ใช้ preview ขอบเขตบนแผนที่ก่อนกด "ยืนยันสร้างตำบล" (ที่จะเรียก POST /tambons ต่อด้วย
+    geom_geojson ที่ได้จาก endpoint นี้ — หน้า admin-setup ไม่มีช่องพิมพ์พิกัด/พื้นที่เอง)
+    admin-only เพื่อกันการดึงข้อมูลขอบเขตทั้งประเทศไปใช้นอกระบบ (ข้อมูล public แต่ bandwidth เป็นของเรา)"""
+    result = thai_admin_boundary.find_tambon_geometry(body.province_th, body.amphoe_th, body.tambon_th)
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail="ไม่พบตำบลนี้ในฐานข้อมูล THA_Tambon — ตรวจว่าเลือกจาก dropdown ที่ผูกกับ "
+            "admin_boundary_lookup.json จริง ไม่ใช่พิมพ์ชื่อเอง",
+        )
+    return ThaiTambonLookupResponse(
+        province_th=body.province_th,
+        amphoe_th=body.amphoe_th,
+        tambon_th=body.tambon_th,
+        name_en=result["name_en"],
+        area_km2=result["area_km2"],
+        area_km2_source="THA_Tambon.dbf (ฐานข้อมูลระดับประเทศ, นำเข้าอัตโนมัติผ่านหน้า admin-setup)",
+        geom_geojson=result["geom_geojson"],
+    )
+
+
+# ============================================================
 # Villages
 # ============================================================
 
@@ -277,6 +310,57 @@ def create_village(body: VillageCreateRequest, _admin: dict = Depends(require_ad
             row = cur.fetchone()
         conn.commit()
     return _row_to_village(row)
+
+
+# ============================================================
+# Village boundary parts (Phase 3 — วาดขอบเขตหมู่บ้านบน Leaflet เท่านั้น)
+# ============================================================
+
+@router.get("/village-boundary-parts", response_model=list[VillageBoundaryPartResponse])
+def list_village_boundary_parts(village_id: str = Query(...)):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "select part_id, village_id, part_label, "
+                "ST_Area(geom::geography) / 1600.0 as area_rai, "
+                "ST_AsGeoJSON(geom)::json as geom_geojson "
+                "from village_boundary_parts where village_id = %s order by created_at",
+                (village_id,),
+            )
+            rows = cur.fetchall()
+    return [_row_to_boundary_part(r) for r in rows]
+
+
+@router.post("/village-boundary-parts", response_model=VillageBoundaryPartResponse, status_code=201)
+def create_village_boundary_part(body: VillageBoundaryPartCreateRequest, _admin: dict = Depends(require_admin)):
+    """admin-only — geom_geojson ต้องมาจากการวาดโพลิกอนบนแผนที่ (Leaflet.draw) ในหน้า admin-setup
+    เท่านั้น (ตรงตามเกณฑ์ผ่าน Phase 3: ไม่มีช่องพิมพ์ข้อความอิสระสำหรับตำแหน่ง/พื้นที่)"""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            try:
+                cur.execute(
+                    "insert into village_boundary_parts (village_id, part_label, geom) "
+                    "values (%s, %s, ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326)) "
+                    "returning part_id, village_id, part_label, "
+                    "ST_Area(geom::geography) / 1600.0 as area_rai, "
+                    "ST_AsGeoJSON(geom)::json as geom_geojson",
+                    (body.village_id, body.part_label, json.dumps(body.geom_geojson)),
+                )
+            except psycopg.errors.ForeignKeyViolation:
+                raise HTTPException(status_code=404, detail="village_id ไม่พบ")
+            row = cur.fetchone()
+        conn.commit()
+    return _row_to_boundary_part(row)
+
+
+def _row_to_boundary_part(row) -> VillageBoundaryPartResponse:
+    return VillageBoundaryPartResponse(
+        part_id=str(row["part_id"]),
+        village_id=str(row["village_id"]),
+        part_label=row["part_label"],
+        area_rai=round(float(row["area_rai"]), 2),
+        geom_geojson=row["geom_geojson"],
+    )
 
 
 # ============================================================

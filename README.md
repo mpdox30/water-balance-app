@@ -10,15 +10,42 @@
 
 ```
 backend/     FastAPI — deploy บน Render Free Web Service (root directory = backend)
+             + data/thai_admin/ (ขอบเขตตำบลทั้งประเทศ, แปลงล่วงหน้าแล้ว — ดู Phase 3)
 frontend/    Static site — deploy บน GitHub Pages (source = GitHub Actions)
+             login.html / admin-setup.html (Phase 3) + js/, css/, data/ (admin_boundary_lookup.json)
 pipeline/    GEE pipeline รายเดือน (Phase 2 — เขียนเสร็จแล้ว) + data/geo/ (GeoJSON อ้างอิงทั้งหมด)
-.github/workflows/   deploy-pages.yml (auto), gee-pipeline.yml (manual — รอทดสอบ credential จริงก่อนเปิด cron)
+.github/workflows/   deploy-pages.yml (auto), gee-pipeline.yml (manual + cron รายเดือน — เปิดแล้ว)
 ```
 
-## สถานะปัจจุบัน: Phase 2
+## สถานะปัจจุบัน: Phase 3
 
-**Phase 2 — เพิ่มใหม่ (โค้ดเขียนเสร็จ ทดสอบ logic ทั้งหมดที่ไม่พึ่ง Earth Engine แล้ว แต่ยังไม่ได้รันกับ
-GEE credential จริง — ดู "ต้องทำเอง" ด้านล่าง):**
+**Phase 3 — เพิ่มใหม่ (โค้ดเขียนเสร็จ ทดสอบ backend end-to-end กับ Postgres+PostGIS จริง (local)
+ด้วย "ตำบลสมมติ" (ด่านคล้า อ.โนนสูง จ.นครราชสีมา — ไม่ใช่แม่นาเรือ) ผ่านครบทุกขั้นตอนแล้ว
+ยังไม่ได้ทดสอบผ่านหน้าเว็บจริงบน URL ที่ deploy แล้ว — ดู "ต้องทำเอง" ด้านล่าง):**
+- [x] `backend/thai_admin_boundary.py` + `backend/data/thai_admin/thai_tambon_geometry.json.gz` —
+      ขอบเขตตำบลทั้งประเทศ 8,105 ตำบล (แปลง UTM47N→WGS84 + simplify ~30m + gzip ล่วงหน้าจาก
+      `THA_Tambon.shp` ล่วงหน้าแล้ว ไม่ต้องพึ่ง pyshp/pyproj/shapely ตอน deploy จริง — ดูเหตุผลเต็มใน
+      หัวไฟล์ `thai_admin_boundary.py` และ `04_scripts/extract_thai_tambon_geometry.py`)
+- [x] Endpoint ใหม่: `POST /admin/thai-tambon-lookup` (admin เท่านั้น — หา geometry จากชื่อจังหวัด/
+      อำเภอ/ตำบลที่ต้องมาจาก dropdown เท่านั้น, 404 ถ้าไม่ตรงรายชื่อจริง), `POST /village-boundary-parts`
+      + `GET /village-boundary-parts` (admin เท่านั้น — geometry ต้องมาจากการวาดบนแผนที่เท่านั้น)
+- [x] `frontend/login.html` — หน้า login จริง (เรียก `POST /auth/login`, เก็บ JWT ใน localStorage)
+      แทนวิธี manual token เดิม
+- [x] `frontend/admin-setup.html` — wizard เพิ่มตำบลใหม่แบบเต็ม (ไม่จำกัดแค่แม่นาเรือ):
+      dropdown จังหวัด→อำเภอ→ตำบล (ผูก `admin_boundary_lookup.json`) → โหลด/ยืนยันขอบเขตจากฐานข้อมูล
+      กลาง → เพิ่มหมู่บ้าน + วาดขอบเขตด้วย Leaflet.draw → ปักหมุดแหล่งน้ำด้วยการคลิกแผนที่ —
+      **ไม่มีช่องพิมพ์พิกัด/พื้นที่อิสระที่ไหนเลย** ตามเกณฑ์ผ่าน Phase 3
+- [x] ทดสอบ backend ผ่าน `FastAPI TestClient` กับ Postgres+PostGIS จริง (local): lookup ตำบลสมมติ →
+      สร้างตำบล → สร้างหมู่บ้าน → วาดขอบเขตหมู่บ้าน (คำนวณไร่จาก PostGIS จริง) → ปักหมุดแหล่งน้ำ →
+      ยืนยันสิทธิ์ (village_rep โดน 403 ทุก endpoint ที่เป็นของ admin) — ผ่านหมดทุกเคส
+- [ ] **ต้องทำเอง:** เปิด `<BACKEND_URL>/docs` ตรวจว่า `/admin/thai-tambon-lookup` และ
+      `/village-boundary-parts` ขึ้นจริงหลัง deploy, แล้วทดสอบ `admin-setup.html` ผ่านเบราว์เซอร์จริง
+      (login ด้วยบัญชี admin → เพิ่มตำบลสมมติ 1 ตำบล → เพิ่มหมู่บ้าน 1-2 หมู่ + วาดขอบเขต → ปักหมุด
+      แหล่งน้ำ 1 จุด) ก่อนถือว่า Phase 3 ผ่านเกณฑ์เต็มรูปแบบ — ไฟล์ `thai_tambon_geometry.json.gz`
+      (~11MB) ทำให้ repo หนักขึ้นพอสมควร ถ้า push ผ่าน `git add .` ปกติจาก terminal ตัวเองครั้งแรก
+      อาจใช้เวลาสักครู่
+
+## Phase 2 (เสร็จแล้ว)
 - [x] `pipeline/rainfall_et0.py` — ฝน (CHIRPS) + ET0 (MOD16A2) ระดับตำบล ต่อยอดจาก
       `03_legacy_prototype/gee_pipeline.py`
 - [x] `pipeline/landcover.py` — runoff coefficient ถ่วงน้ำหนักจากข้อมูลการใช้ที่ดินทางการปี 2566
@@ -140,3 +167,12 @@ curl -X POST <BACKEND_URL>/users \
       ฤดูฝนภาคเหนือ), land cover + rice paddy เขียนครบทั้ง 18 หมู่บ้าน
 - [ ] Scheduled workflow รันสำเร็จอัตโนมัติอย่างน้อย 1 รอบเต็มโดยไม่ต้องสั่งมือ — เปิด cron แล้ว
       (ต้นเดือน 08:00 เวลาไทย) รอยืนยันรอบอัตโนมัติแรกต้นเดือนถัดไป
+
+## เกณฑ์ผ่าน Phase 3 (ตาม 01-phased-work-plan.md)
+
+- [x] ไม่มีช่องพิมพ์ข้อความอิสระสำหรับตำแหน่ง/พื้นที่เลย (ตำบล/หมู่บ้าน/แหล่งน้ำ มาจาก dropdown +
+      วาด/คลิกบนแผนที่ทั้งหมด)
+- [x] ทดสอบกับตำบลสมมติ (ไม่ใช่แม่นาเรือ) ได้จริง — ทดสอบระดับ backend ผ่าน `FastAPI TestClient` แล้ว
+      (ด่านคล้า อ.โนนสูง จ.นครราชสีมา) ผ่านครบทุกขั้นตอน (lookup → สร้างตำบล → เพิ่มหมู่บ้าน →
+      วาดขอบเขต → ปักหมุดแหล่งน้ำ → ตรวจสิทธิ์)
+- [ ] ทดสอบผ่านหน้าเว็บจริงบนเบราว์เซอร์ (ไม่ใช่แค่ TestClient) — ยังไม่ได้ทำ ดู "ต้องทำเอง" ด้านบน

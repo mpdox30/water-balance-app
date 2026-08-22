@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>เข้าสู่ระบบ — ระบบสมดุลน้ำชุมชนระดับตำบล</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="page">
+  <h1>เข้าสู่ระบบ</h1>
+  <p class="muted">สำหรับ admin (ตั้งค่าตำบล/หมู่บ้าน/แหล่งน้ำ) และตัวแทนหมู่บ้าน (รายงานรายเดือน)</p>
+
+  <form id="login-form" class="card">
+    <label for="username">ชื่อผู้ใช้</label>
+    <input type="text" id="username" name="username" required autocomplete="username">
+
+    <label for="password">รหัสผ่าน</label>
+    <input type="password" id="password" name="password" required autocomplete="current-password">
+
+    <button type="submit" id="submit-btn">เข้าสู่ระบบ</button>
+    <div id="error" class="fail muted" style="margin-top:0.75rem;"></div>
+  </form>
+</div>
+
+<script src="js/auth.js"></script>
+<script src="js/login.js"></script>
+</body>
+</html>

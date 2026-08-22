@@ -61,6 +61,26 @@ class TambonResponse(BaseModel):
     geom_geojson: Optional[dict] = None
 
 
+# ---------- Thai nationwide admin boundary lookup (Phase 3) ----------
+
+class ThaiTambonLookupRequest(BaseModel):
+    """มาจากการเลือก dropdown จังหวัด/อำเภอ/ตำบล (ผูกกับ admin_boundary_lookup.json) เท่านั้น —
+    ไม่ใช่ช่องพิมพ์ข้อความอิสระ (ค่าที่พิมพ์ไม่ตรงกับตัวเลือกใน dropdown จะหา geometry ไม่เจอ)"""
+    province_th: str
+    amphoe_th: str
+    tambon_th: str
+
+
+class ThaiTambonLookupResponse(BaseModel):
+    province_th: str
+    amphoe_th: str
+    tambon_th: str
+    name_en: Optional[str] = None
+    area_km2: float
+    area_km2_source: str
+    geom_geojson: dict
+
+
 # ---------- Villages ----------
 
 class VillageCreateRequest(BaseModel):
@@ -92,6 +112,22 @@ class VillageResponse(BaseModel):
     other_rai: Optional[float] = None
     total_rai: Optional[float] = None
     data_year_be: Optional[int] = None
+
+
+# ---------- Village boundary parts (Phase 3 — วาดขอบเขตบน Leaflet เท่านั้น ไม่พิมพ์พิกัดเอง) ----------
+
+class VillageBoundaryPartCreateRequest(BaseModel):
+    village_id: str
+    part_label: Optional[str] = None  # null = ส่วนเดียว, 'เขต1'/'เขต2' = พื้นที่ไม่ต่อเนื่อง
+    geom_geojson: dict  # GeoJSON Polygon geometry object — มาจากการวาดบนแผนที่ (Leaflet.draw) เท่านั้น
+
+
+class VillageBoundaryPartResponse(BaseModel):
+    part_id: str
+    village_id: str
+    part_label: Optional[str] = None
+    area_rai: float
+    geom_geojson: dict
 
 
 # ---------- Water storage sources ----------

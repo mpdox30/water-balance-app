@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ตั้งค่าตำบลใหม่ — ระบบสมดุลน้ำชุมชนระดับตำบล</title>
+<link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css">
+<style>
+  .layout { display: grid; grid-template-columns: minmax(20rem, 26rem) 1fr; gap: 1.5rem; align-items: start; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+  .col-left { min-width: 0; }
+  .col-right #map { height: calc(100vh - 8rem); min-height: 420px; position: sticky; top: 1rem; }
+  .village-row-actions button { margin-top: 0; padding: 0.3rem 0.6rem; font-size: 0.85em; }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <strong>ตั้งค่าตำบลใหม่ (admin-setup)</strong>
+  <div>
+    <span id="whoami" class="muted"></span>
+    <button class="secondary" onclick="logout()" style="margin-top:0; margin-left:0.75rem;">ออกจากระบบ</button>
+  </div>
+</div>
+
+<div class="page-wide">
+  <div class="layout">
+    <div class="col-left">
+
+      <section id="step1" class="card step active">
+        <h2>1) เลือกตำบล</h2>
+        <p class="muted">เลือกจากรายชื่อทางการทั้งประเทศ (8,105 ตำบล) — ไม่มีช่องพิมพ์ชื่อ/พิกัด/พื้นที่เอง
+        ขอบเขตจะดึงมาจากฐานข้อมูลกลาง (THA_Tambon) อัตโนมัติ</p>
+
+        <label for="sel-province">จังหวัด</label>
+        <select id="sel-province"><option value="">-- เลือกจังหวัด --</option></select>
+
+        <label for="sel-amphoe">อำเภอ</label>
+        <select id="sel-amphoe" disabled><option value="">-- เลือกอำเภอ --</option></select>
+
+        <label for="sel-tambon">ตำบล</label>
+        <select id="sel-tambon" disabled><option value="">-- เลือกตำบล --</option></select>
+
+        <button id="btn-load-boundary" disabled>โหลดขอบเขตจากฐานข้อมูลกลาง</button>
+        <div id="tambon-preview" class="muted" style="margin-top:0.5rem;"></div>
+        <button id="btn-confirm-tambon" class="secondary" disabled>ยืนยันสร้างตำบลนี้</button>
+        <div id="tambon-status" class="muted" style="margin-top:0.5rem;"></div>
+      </section>
+
+      <section id="step2" class="card step">
+        <h2>2) เพิ่มหมู่บ้าน + วาดขอบเขต</h2>
+        <p class="muted">เพิ่มหมู่บ้านทีละหมู่ แล้ววาดขอบเขตบนแผนที่ด้านขวา (เครื่องมือรูปหลายเหลี่ยม)
+        — ไม่มีช่องพิมพ์พิกัด</p>
+
+        <label for="village-moo">หมู่ที่</label>
+        <input type="number" id="village-moo" min="1" step="1">
+        <label for="village-name">ชื่อหมู่บ้าน</label>
+        <input type="text" id="village-name" placeholder="เช่น บ้านสันติสุข">
+        <button id="btn-add-village">เพิ่มหมู่บ้าน</button>
+        <div id="village-add-status" class="muted" style="margin-top:0.5rem;"></div>
+
+        <table id="village-table" style="display:none;">
+          <thead><tr><th>หมู่</th><th>ชื่อ</th><th>ขอบเขตที่วาด (ไร่)</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+
+        <div id="draw-hint" class="muted" style="margin-top:0.75rem; display:none;">
+          กำลังวาดขอบเขตให้ <strong id="draw-target-name"></strong> —
+          กดปุ่มรูปหลายเหลี่ยม <span class="badge">⬠</span> มุมซ้ายบนของแผนที่ แล้ววาดตามขอบเขตจริง
+        </div>
+      </section>
+
+      <section id="step3" class="card step">
+        <h2>3) เพิ่มแหล่งน้ำ (สระ/อ่างเก็บน้ำ/บาดาล ฯลฯ)</h2>
+        <p class="muted">คลิกตำแหน่งบนแผนที่เพื่อปักหมุด แล้วกรอกรายละเอียด — ไม่มีช่องพิมพ์พิกัดเอง</p>
+
+        <label for="source-name">ชื่อแหล่งน้ำ</label>
+        <input type="text" id="source-name" placeholder="เช่น สระหนองบัว">
+        <label for="source-type">ประเภท</label>
+        <select id="source-type">
+          <option value="pond">สระ</option>
+          <option value="reservoir">อ่างเก็บน้ำ</option>
+          <option value="groundwater_well">บ่อบาดาล</option>
+          <option value="mountain_spring">น้ำผุดจากภูเขา</option>
+          <option value="purchased_external">ซื้อน้ำจากภายนอก</option>
+        </select>
+        <label for="source-village">หมู่บ้านที่เกี่ยวข้อง (เว้นว่าง = ใช้ร่วมทั้งตำบล)</label>
+        <select id="source-village"><option value="">-- ระดับตำบล --</option></select>
+        <label for="source-capacity">ปริมาตรกักเก็บ (ลบ.ม., ถ้ามี)</label>
+        <input type="number" id="source-capacity" min="0">
+
+        <button id="btn-pin-mode" class="secondary">เริ่มปักหมุดบนแผนที่</button>
+        <div id="pin-status" class="muted" style="margin-top:0.5rem;">ยังไม่ได้ปักหมุด</div>
+        <button id="btn-save-source" disabled>บันทึกแหล่งน้ำ</button>
+
+        <table id="source-table" style="display:none;">
+          <thead><tr><th>ชื่อ</th><th>ประเภท</th><th>หมู่บ้าน</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </section>
+
+      <section id="step4" class="card step">
+        <h2>4) เสร็จสิ้น</h2>
+        <p>เพิ่มตำบลใหม่พร้อมหมู่บ้าน/แหล่งน้ำแล้ว — ข้อมูลรายเดือน (พืช/ปศุสัตว์) ให้ตัวแทนหมู่บ้าน
+        กรอกเองผ่านระบบ (Phase 4) ส่วนฝน/ET0/land cover จะคำนวณอัตโนมัติทุกต้นเดือน (Phase 2)</p>
+        <a href="index.html"><button class="secondary">กลับหน้าแรก</button></a>
+      </section>
+
+    </div>
+
+    <div class="col-right">
+      <div id="map"></div>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/admin-setup.js"></script>
+</body>
+</html>
