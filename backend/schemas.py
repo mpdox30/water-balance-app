@@ -135,7 +135,7 @@ class VillageBoundaryPartResponse(BaseModel):
 class WaterSourceCreateRequest(BaseModel):
     tambon_id: str
     village_id: Optional[str] = None
-    source_type: Literal["pond", "reservoir", "groundwater_well", "mountain_spring", "purchased_external"]
+    source_type: Literal["pond", "reservoir", "groundwater_well", "mountain_spring", "purchased_external", "weir"]
     name_th: str
     name_en: Optional[str] = None
     telemetry_code: Optional[str] = None
@@ -197,3 +197,36 @@ class LivestockReportResponse(BaseModel):
     head_count: int
     reported_month: date
     reported_by_role: str
+
+
+# ---------- Water balance (Phase 5) ----------
+
+class BalanceCategoryValue(BaseModel):
+    """1 หมวด (consumption/domestic/agri/livestock) ของ 1 เดือน — supply_cum ซ้ำกันทั้ง 4 หมวดโดยตั้งใจ
+    (สต็อกน้ำก้อนเดียวแข่งกันใช้ทุกประเภท ไม่ได้แบ่งสัดส่วนตายตัวต่อประเภท — ดู pipeline/balance_engine.py)"""
+    supply_cum: float
+    demand_cum: float
+    balance_cum: float
+    status: str  # 'surplus' | 'deficit'
+
+
+class VillageBalanceResponse(BaseModel):
+    village_id: str
+    name_th: str
+    moo: int
+    months: dict[str, dict[str, BalanceCategoryValue]]  # {month: {category: value}}
+
+
+class TambonBalanceOverview(BaseModel):
+    """ภาพรวมตำบล — demand = ผลรวมทุกหมู่บ้าน, supply = สระระดับหมู่บ้านทุกแห่ง + อ่างเก็บน้ำระดับตำบล
+    (water_storage_sources.village_id IS NULL) ที่ไม่ถูกนับในระดับหมู่บ้านรายตัว"""
+    months: dict[str, dict[str, BalanceCategoryValue]]
+    reservoir_capacity_m3: float  # ความจุอ่างระดับตำบลที่รวมเข้ามาเพิ่มจากระดับหมู่บ้าน (แสดงแยกให้เห็นที่มา)
+
+
+class BalanceResponse(BaseModel):
+    tambon_id: str
+    tambon_name_th: str
+    available_months: list[str]  # เดือนที่มีข้อมูล ET0/ฝนจริงแล้วเท่านั้น (ไม่ fabricate เดือนที่ยังไม่มี)
+    villages: list[VillageBalanceResponse]
+    tambon_overview: TambonBalanceOverview

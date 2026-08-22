@@ -98,3 +98,144 @@ def upsert_rice_paddy_monthly(conn, village_id: str, month: str, paddy_area_rai:
             "source = excluded.source",
             (village_id, month, paddy_area_rai),
         )
+
+
+# =============================================================================
+# เพิ่มเติมสำหรับ Phase 5 (balance_engine.py) — ต่อท้ายฟังก์ชันเดิมของ Phase 2 ด้านบน
+# =============================================================================
+
+def fetch_climate(conn, tambon_id: str, month: str) -> dict | None:
+    """คืน {'rainfall_mm':..., 'et0_mm':...} ของตำบล/เดือนนั้น หรือ None ถ้ายังไม่มี et0_mm
+    (rainfall_mm อาจ NULL ได้โดยไม่ block การคำนวณ agri เพราะไม่ได้ใช้หัก effective rainfall ในเวอร์ชันนี้
+    — ดู balance_engine.py ข้อจำกัดข้อ 4)"""
+    with conn.cursor() as cur:
+        cur.execute(
+            "select r.rainfall_mm, e.et0_mm from et0_monthly e "
+            "left join rainfall_monthly r on r.tambon_id = e.tambon_id and r.month = e.month "
+            "where e.tambon_id = %s and e.month = %s",
+            (tambon_id, month),
+        )
+        return cur.fetchone()
+
+
+def fetch_kc_reference(conn) -> dict:
+    """คืน {crop_name (=ชื่อกลุ่ม Kc): dict_row ทั้งแถว} จาก crop_kc_reference"""
+    with conn.cursor() as cur:
+        cur.execute(
+            "select crop_name, crop_type, kc_ini, kc_mid, kc_end, growth_days, "
+            "ini_days, dev_days, mid_days, late_days, planting_month_default, source, note "
+            "from crop_kc_reference"
+        )
+        return {row["crop_name"]: row for row in cur.fetchall()}
+
+
+def fetch_villages_with_population(conn, tambon_id: str) -> list[dict]:
+    with conn.cursor() as cur:
+        cur.execute(
+            "select village_id, name_th, moo, population from villages where tambon_id = %s order by moo",
+            (tambon_id,),
+        )
+        return cur.fetchall()
+
+
+def fetch_crop_report_latest(conn, tambon_id: str) -> list[dict]:
+    """ดึง crop_report แถวล่าสุดต่อหมู่บ้าน (reported_month ล่าสุดที่มีข้อมูลของแต่ละหมู่บ้าน) —
+    ปัจจุบันมีแค่เดือนเดียว (2026-07-01) ต่อหมู่บ้านอยู่แล้ว แต่เขียนให้รองรับหลายเดือนในอนาคตด้วย
+    distinct on ต่อ (village_id, crop_name) เอาแถวที่ reported_month ใหม่สุด"""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            select distinct on (cr.village_id, cr.crop_name)
+                cr.village_id, cr.crop_name, cr.planted_area_rai, cr.reported_month
+            from crop_report cr
+            join villages v on v.village_id = cr.village_id
+            where v.tambon_id = %s
+            order by cr.village_id, cr.crop_name, cr.reported_month desc
+            """,
+            (tambon_id,),
+        )
+        return cur.fetchall()
+
+
+def fetch_livestock_report_latest(conn, tambon_id: str) -> list[dict]:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            select distinct on (lr.village_id, lr.species)
+                lr.village_id, lr.species, lr.head_count, lr.reported_month
+            from livestock_report lr
+            join villages v on v.village_id = lr.village_id
+            where v.tambon_id = %s
+            order by lr.village_id, lr.species, lr.reported_month desc
+            """,
+            (tambon_id,),
+        )
+        return cur.fetchall()
+
+
+def fetch_livestock_constants(conn) -> dict:
+    """คืน {'วัว': 15.0, 'ควาย': 18.0} จาก water_demand_constants (category='livestock')"""
+    with conn.cursor() as cur:
+        cur.execute("select constant_key, value from water_demand_constants where category = 'livestock'")
+        rows = cur.fetchall()
+    result = {}
+    for row in rows:
+        if "cattle" in row["constant_key"]:
+            result["วัว"] = float(row["value"])
+        elif "buffalo" in row["constant_key"]:
+            result["ควาย"] = float(row["value"])
+    return result
+
+
+def fetch_consumption_domestic_constants(conn) -> tuple[float, float]:
+    """คืน (consumption_lpcd, domestic_lpcd) จาก water_demand_constants"""
+    with conn.cursor() as cur:
+        cur.execute(
+            "select constant_key, value from water_demand_constants "
+            "where constant_key in ('consumption_lpcd', 'domestic_lpcd')"
+        )
+        rows = {r["constant_key"]: float(r["value"]) for r in cur.fetchall()}
+    return rows.get("consumption_lpcd", 2.0), rows.get("domestic_lpcd", 50.0)
+
+
+def fetch_village_pond_stock(conn, tambon_id: str) -> dict:
+    """คืน {village_id: sum(stored_capacity_m3)} เฉพาะแหล่งน้ำที่ผูก village_id (สระ/บ่อระดับหมู่บ้าน)
+    *** ไม่รวมอ่างเก็บน้ำระดับตำบล (village_id IS NULL) — ดู balance_engine.py หัวไฟล์ ***"""
+    with conn.cursor() as cur:
+        cur.execute(
+            "select village_id, sum(stored_capacity_m3) as total_m3 "
+            "from water_storage_sources "
+            "where tambon_id = %s and village_id is not null and stored_capacity_m3 is not null "
+            "group by village_id",
+            (tambon_id,),
+        )
+        return {row["village_id"]: float(row["total_m3"]) for row in cur.fetchall()}
+
+
+def write_balance_results(conn, tambon_id, month, crop_demand_rows, livestock_demand_rows, balance_rows):
+    """เขียนผลทั้ง 3 ตาราง — ลบของเดือน/ตำบลนั้นทิ้งก่อนแล้วค่อย insert ใหม่ทั้งชุด (idempotent ต่อการรันซ้ำ)"""
+    village_ids_subq = "select village_id from villages where tambon_id = %s"
+    with conn.cursor() as cur:
+        cur.execute(f"delete from crop_water_demand_monthly where month = %s and village_id in ({village_ids_subq})",
+                    (month, tambon_id))
+        cur.execute(f"delete from livestock_water_demand_monthly where month = %s and village_id in ({village_ids_subq})",
+                    (month, tambon_id))
+        cur.execute(f"delete from water_balance_monthly where month = %s and village_id in ({village_ids_subq})",
+                    (month, tambon_id))
+
+        cur.executemany(
+            "insert into crop_water_demand_monthly (village_id, month, crop_name, demand_cum) "
+            "values (%s, %s, %s, %s)",
+            crop_demand_rows,
+        )
+        cur.executemany(
+            "insert into livestock_water_demand_monthly (village_id, month, species, demand_cum) "
+            "values (%s, %s, %s, %s)",
+            livestock_demand_rows,
+        )
+        cur.executemany(
+            "insert into water_balance_monthly "
+            "(village_id, month, category, supply_cum, demand_cum, balance_cum, status, computed_at) "
+            "values (%s, %s, %s, %s, %s, %s, %s, now())",
+            balance_rows,
+        )

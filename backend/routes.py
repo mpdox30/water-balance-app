@@ -17,18 +17,22 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 import thai_admin_boundary
 from db import get_conn
 from schemas import (
+    BalanceCategoryValue,
+    BalanceResponse,
     CropReportCreateRequest,
     CropReportResponse,
     LivestockReportCreateRequest,
     LivestockReportResponse,
     LoginRequest,
     LoginResponse,
+    TambonBalanceOverview,
     TambonCreateRequest,
     TambonResponse,
     ThaiTambonLookupRequest,
     ThaiTambonLookupResponse,
     UserCreateRequest,
     UserResponse,
+    VillageBalanceResponse,
     VillageBoundaryPartCreateRequest,
     VillageBoundaryPartResponse,
     VillageCreateRequest,
@@ -547,4 +551,106 @@ def create_livestock_report(body: LivestockReportCreateRequest, user: dict = Dep
         conn.commit()
     return LivestockReportResponse(
         **{**row, "report_id": str(row["report_id"]), "village_id": str(row["village_id"])}
+    )
+
+
+# ============================================================
+# Water balance (Phase 5) — อ่านอย่างเดียว ผลคำนวณมาจาก pipeline/balance_engine.py
+# ============================================================
+
+@router.get("/balance", response_model=BalanceResponse)
+def get_balance(tambon_id: str = Query(...)):
+    """คืนสมดุลน้ำ 4 หมวด ต่อหมู่บ้าน + ภาพรวมตำบล ตามเกณฑ์ผ่าน Phase 5 (01-phased-work-plan.md)
+
+    available_months คือเดือนที่มี water_balance_monthly จริงเท่านั้น (มาจาก ET0/ฝนที่ pipeline/run_monthly.py
+    คำนวณแล้วจริง) — ไม่ fabricate เดือนที่ยังไม่ได้รัน GEE pipeline ให้ครบ 12 เดือน
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("select tambon_id, name_th from tambons where tambon_id = %s", (tambon_id,))
+            tambon_row = cur.fetchone()
+            if not tambon_row:
+                raise HTTPException(status_code=404, detail="tambon not found")
+
+            cur.execute(
+                "select village_id, name_th, moo from villages where tambon_id = %s order by moo",
+                (tambon_id,),
+            )
+            village_rows = cur.fetchall()
+
+            cur.execute(
+                "select wb.village_id, wb.month, wb.category, wb.supply_cum, wb.demand_cum, "
+                "wb.balance_cum, wb.status "
+                "from water_balance_monthly wb "
+                "join villages v on v.village_id = wb.village_id "
+                "where v.tambon_id = %s "
+                "order by wb.month",
+                (tambon_id,),
+            )
+            balance_rows = cur.fetchall()
+
+            # อ่างเก็บน้ำระดับตำบล (village_id IS NULL) — ไม่ถูกนับในระดับหมู่บ้านรายตัว, รวมเฉพาะภาพรวมตำบล
+            cur.execute(
+                "select coalesce(sum(stored_capacity_m3), 0) as total "
+                "from water_storage_sources where tambon_id = %s and village_id is null",
+                (tambon_id,),
+            )
+            reservoir_total = float(cur.fetchone()["total"])
+
+    months_set = sorted({str(r["month"]) for r in balance_rows})
+
+    # จัดกลุ่มต่อหมู่บ้าน
+    by_village: dict = {}
+    for r in balance_rows:
+        vid = str(r["village_id"])
+        month = str(r["month"])
+        by_village.setdefault(vid, {}).setdefault(month, {})[r["category"]] = BalanceCategoryValue(
+            supply_cum=float(r["supply_cum"]),
+            demand_cum=float(r["demand_cum"]),
+            balance_cum=float(r["balance_cum"]),
+            status=r["status"],
+        )
+
+    villages_out = [
+        VillageBalanceResponse(
+            village_id=str(v["village_id"]),
+            name_th=v["name_th"],
+            moo=v["moo"],
+            months=by_village.get(str(v["village_id"]), {}),
+        )
+        for v in village_rows
+    ]
+
+    # ภาพรวมตำบล: demand = ผลรวมทุกหมู่บ้านต่อหมวด/เดือน, supply = สระหมู่บ้านทุกแห่ง (ผลรวม supply_cum
+    # ต่อหมู่บ้าน นับซ้ำไม่ได้เพราะแต่ละหมู่บ้าน supply_cum ก็คือสระของหมู่บ้านตัวเองอยู่แล้ว) + อ่างตำบล
+    overview_months: dict = {}
+    for month in months_set:
+        for category in ("consumption", "domestic", "agri", "livestock"):
+            total_demand = 0.0
+            total_supply = 0.0
+            seen_village = set()
+            for r in balance_rows:
+                if str(r["month"]) != month or r["category"] != category:
+                    continue
+                total_demand += float(r["demand_cum"])
+                vid = str(r["village_id"])
+                if vid not in seen_village:  # supply_cum ต่อหมู่บ้านนับครั้งเดียว (ซ้ำกันทั้ง 4 หมวดในแถวเดิม)
+                    total_supply += float(r["supply_cum"])
+                    seen_village.add(vid)
+            total_supply += reservoir_total
+            balance = round(total_supply - total_demand, 2)
+            status = "surplus" if (total_demand <= 0 or total_supply >= total_demand) else "deficit"
+            overview_months.setdefault(month, {})[category] = BalanceCategoryValue(
+                supply_cum=round(total_supply, 2),
+                demand_cum=round(total_demand, 2),
+                balance_cum=balance,
+                status=status,
+            )
+
+    return BalanceResponse(
+        tambon_id=str(tambon_row["tambon_id"]),
+        tambon_name_th=tambon_row["name_th"],
+        available_months=months_set,
+        villages=villages_out,
+        tambon_overview=TambonBalanceOverview(months=overview_months, reservoir_capacity_m3=reservoir_total),
     )
