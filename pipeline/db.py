@@ -162,6 +162,16 @@ def fetch_kc_reference(conn) -> dict:
         return {row["crop_name"]: row for row in cur.fetchall()}
 
 
+def fetch_crop_group_alias(conn) -> dict:
+    """คืน {primary_name: crop_group} จาก crop_group_alias — mapping "พืชหลัก" (ก่อน '+'/'/' ตัวแรกใน
+    crop_report.crop_name ตัด primary_crop() แล้ว) -> ชื่อกลุ่ม Kc ใน crop_kc_reference เดิมเป็น
+    PRIMARY_TO_GROUP dict ฝังในโค้ดไฟล์นี้เอง ย้ายมาเป็นตาราง (2569-08) เพื่อให้ backend/routes.py อ่าน
+    mapping เดียวกันได้ตอน validate ชื่อพืชที่ผู้ใช้กรอกเข้ามา — ดูคอมเมนต์ตาราง crop_group_alias ในฐานข้อมูล"""
+    with conn.cursor() as cur:
+        cur.execute("select primary_name, crop_group from crop_group_alias")
+        return {row["primary_name"]: row["crop_group"] for row in cur.fetchall()}
+
+
 def fetch_cropping_calendar(conn, tambon_id: str) -> dict:
     """คืน {crop_group: [dict_row, ...]} จาก cropping_calendar เฉพาะตำบลนี้ — ใช้ override ปฏิทินปลูก/
     เส้นโค้ง Kc ของ crop_kc_reference (ค่า global) เมื่อพฤติกรรมการปลูกของตำบลนี้ต่างจากค่าเริ่มต้น (เช่น

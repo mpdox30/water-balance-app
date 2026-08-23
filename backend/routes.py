@@ -631,6 +631,38 @@ def _recompute_balance_for_month(reported_month: date) -> None:
 _CROP_COLS = "report_id, village_id, crop_name, planted_area_rai, reported_month, reported_by_role"
 
 
+def _primary_crop(raw_name: str) -> str:
+    """ตัดเอาพืชหลัก (ก่อนตัว '+' หรือ '/' ตัวแรก) — ตรรกะเดียวกับ pipeline/balance_engine.py::primary_crop()
+    คัดลอกมาไว้ที่นี่เพราะ backend กับ pipeline เป็นคนละ deployment/process กัน (Render vs GitHub Actions)
+    เรียก import ข้ามกันตรงๆ ไม่ได้ปลอดภัย — แต่ฟังก์ชันนี้เป็นแค่ string split ล้วนๆ ไม่มีข้อมูลที่ต้องซิงค์
+    จึงคัดลอกได้โดยไม่เสี่ยงเพี้ยนเหมือนตอนที่ mapping ข้อมูล (พืช -> กลุ่ม Kc) เคยฝังอยู่ใน 2 ที่แยกกัน —
+    mapping ข้อมูลนั้นย้ายไปเก็บในตาราง crop_group_alias ที่เดียวแล้ว (ดู _fetch_known_crop_primaries ด้านล่าง)"""
+    name = raw_name.strip()
+    for sep in ("+", "/"):
+        if sep in name:
+            name = name.split(sep, 1)[0].strip()
+            break
+    return name
+
+
+def _fetch_known_crop_primaries(conn) -> set[str]:
+    with conn.cursor() as cur:
+        cur.execute("select primary_name from crop_group_alias")
+        return {row["primary_name"] for row in cur.fetchall()}
+
+
+def _unmapped_crop_warning(crop_name: str, known_primaries: set[str]) -> str | None:
+    """None ถ้าระบบรู้จักพืชนี้ (คิดน้ำเกษตรให้ตามปกติ) — ข้อความเตือนถ้าไม่รู้จัก (บันทึกสำเร็จแล้ว แต่จะไม่ถูก
+    คิดในสมดุลน้ำจนกว่าแอดมินจะเพิ่ม mapping เข้าตาราง crop_group_alias) — เพิ่ม 2569-08 หลังพบว่าคำแนะนำชื่อ
+    พืชในหน้ากรอกข้อมูล (frontend datalist) เคยไม่ตรงกับที่ pipeline คำนวณจริง ทำให้ข้อมูลถูกข้ามเงียบๆ"""
+    if _primary_crop(crop_name) in known_primaries:
+        return None
+    return (
+        f'ชื่อพืช "{crop_name}" ระบบยังไม่รู้จัก — บันทึกข้อมูลสำเร็จแล้ว แต่จะไม่ถูกคิดในสมดุลน้ำจนกว่า '
+        "แอดมินจะเพิ่มชื่อพืชนี้เข้าระบบก่อน"
+    )
+
+
 @router.get("/crop-reports", response_model=list[CropReportResponse])
 def list_crop_reports(village_id: str | None = Query(default=None), month: str | None = Query(default=None)):
     sql = f"select {_CROP_COLS} from crop_report where 1=1"
@@ -663,9 +695,13 @@ def create_crop_report(
                 (body.village_id, body.crop_name, body.planted_area_rai, body.reported_month, user["role"]),
             )
             row = cur.fetchone()
+        known_primaries = _fetch_known_crop_primaries(conn)
         conn.commit()
     background_tasks.add_task(_recompute_balance_for_month, body.reported_month)
-    return CropReportResponse(**{**row, "report_id": str(row["report_id"]), "village_id": str(row["village_id"])})
+    return CropReportResponse(
+        **{**row, "report_id": str(row["report_id"]), "village_id": str(row["village_id"])},
+        unmapped_crop_warning=_unmapped_crop_warning(row["crop_name"], known_primaries),
+    )
 
 
 @router.post("/crop-reports/bulk", response_model=list[CropReportResponse], status_code=201)
@@ -690,7 +726,11 @@ def bulk_create_crop_reports(
     หมายเหตุ: ไม่ตรวจ "พื้นที่ปลูกรวมไม่เกิน agri_rai ของหมู่บ้าน" แบบที่ frontend ฟอร์มเดี่ยว (report.js) ทำ
     เพราะข้อมูลที่เข้ามาทางนี้มักมาจากแหล่งที่แม่นกว่า/ใหม่กว่า (เช่น landuse overlay) ซึ่งควรเป็นตัวปรับปรุง
     agri_rai ของหมู่บ้านเอง (ผ่าน PATCH /villages/{id} แยกต่างหาก) ไม่ใช่ถูกบล็อกด้วยค่า agri_rai เดิมที่อาจ
-    เก่ากว่า/ไม่แม่นเท่า"""
+    เก่ากว่า/ไม่แม่นเท่า
+
+    แต่ละแถวใน response จะมี unmapped_crop_warning ไม่ใช่ None ถ้าชื่อพืชแถวนั้นไม่มีอยู่ในตาราง
+    crop_group_alias (บันทึกสำเร็จ แต่จะไม่ถูกคิดในสมดุลน้ำจนกว่าจะเพิ่ม mapping) — ไม่ block การ import
+    ทั้งชุดเพราะพืชแถวเดียวไม่รู้จัก (2569-08 เพิ่มมาแทนที่จะให้เงียบหายไปจน log ฝั่ง pipeline เท่านั้น)"""
     village_ids = list({item.village_id for item in body.items})
     created = []
     with get_conn() as conn:
@@ -708,10 +748,14 @@ def bulk_create_crop_reports(
                     (item.village_id, item.crop_name, item.planted_area_rai, body.reported_month, admin["role"]),
                 )
                 created.append(cur.fetchone())
+        known_primaries = _fetch_known_crop_primaries(conn)
         conn.commit()
     background_tasks.add_task(_recompute_balance_for_month, body.reported_month)
     return [
-        CropReportResponse(**{**r, "report_id": str(r["report_id"]), "village_id": str(r["village_id"])})
+        CropReportResponse(
+            **{**r, "report_id": str(r["report_id"]), "village_id": str(r["village_id"])},
+            unmapped_crop_warning=_unmapped_crop_warning(r["crop_name"], known_primaries),
+        )
         for r in created
     ]
 

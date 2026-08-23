@@ -330,7 +330,14 @@ document.getElementById("btn-bulk-crop-submit").addEventListener("click", async 
     });
     const body = await res.json();
     if (!res.ok) throw new Error(body.detail || "บันทึกไม่สำเร็จ");
-    statusEl.innerHTML = '<span class="ok">นำเข้าสำเร็จ ✓ (' + body.length + " รายการ" + (updateAgri ? ", อัปเดตพื้นที่เกษตรแล้ว" : "") + ")</span>";
+    let html =
+      '<span class="ok">นำเข้าสำเร็จ ✓ (' + body.length + " รายการ" +
+      (updateAgri ? ", อัปเดตพื้นที่เกษตรแล้ว" : "") + ")</span>";
+    const uniqueWarnings = [...new Set(body.map((r) => r.unmapped_crop_warning).filter(Boolean))];
+    if (uniqueWarnings.length) {
+      html += '<div class="fail" style="margin-top:0.5rem;">⚠ ' + uniqueWarnings.join("<br>⚠ ") + "</div>";
+    }
+    statusEl.innerHTML = html;
     document.getElementById("btn-bulk-crop-submit").style.display = "none";
     // ถ้าหมู่บ้านที่กำลังเลือกอยู่ในขั้นตอนที่ 1 อยู่ในชุดที่เพิ่ง import ไป ให้รีเฟรชตารางที่แสดงอยู่ด้วย
     if (typeof currentVillage !== "undefined" && currentVillage && bulkVillageAgriTotals[currentVillage.village_id] !== undefined) {

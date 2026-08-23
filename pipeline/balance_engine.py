@@ -21,7 +21,7 @@ balance_engine.py — Phase 5: คำนวณสมดุลน้ำ 4 หม�
 - น้ำปศุสัตว์ (livestock)  = จำนวนหัวสัตว์ต่อชนิด × ค่าคงที่ ลบ.ม./ตัว/ปี (water_demand_constants) ÷ 12
   (หาร 12 เกลี่ยเท่ากันทุกเดือน — ยังไม่มีข้อมูลฤดูกาลการเลี้ยงจริง ถือเป็นค่าประมาณเบื้องต้น)
 - น้ำเกษตร (agri) ต่อแถวพืช = ET0(มม.) × Kc(เดือนนั้น) × พื้นที่ปลูก(ไร่) × 1.6   [FAO-56 Single Crop Coefficient]
-  Kc มาจาก crop_kc_reference (กลุ่มพืช, ดู PRIMARY_TO_GROUP ด้านล่างสำหรับการจับคู่ชื่อพืชจริง -> กลุ่ม)
+  Kc มาจาก crop_kc_reference (กลุ่มพืช, ดูตาราง crop_group_alias สำหรับการจับคู่ชื่อพืชจริง -> กลุ่ม)
   พืชกลุ่ม seasonal ใช้ growth curve (ini/dev/mid/late ตาม planting_month_default)
   พืชกลุ่ม perennial_flat ใช้ Kc คงที่ตัวเดียวทั้งปี (ไม่มีข้อมูลปีที่ปลูก/อายุต้นไม้ยืนต้น)
 
@@ -45,7 +45,9 @@ balance_engine.py — Phase 5: คำนวณสมดุลน้ำ 4 หม�
    จริง (มีตารางแล้วแต่ยังไม่มีข้อมูล)
 2. Kc ของไม้ผล/ไม้ยืนต้นหลายชนิด (ลำไย ยางพารา สัก ฯลฯ) เป็นค่าประมาณกลุ่ม (ดู crop_kc_reference.note
    ของแต่ละแถว) เพราะสืบค้นวรรณกรรมแล้วไม่พบค่า Kc เฉพาะพันธุ์ที่เชื่อถือได้ในรอบการค้นคว้าตอน Phase 5
-3. ปศุสัตว์ปัจจุบัน = 0 ทุกหมู่บ้าน (ตามที่ผู้ใช้สั่งให้สมมติไปก่อน รอข้อมูลจริงจากพื้นที่)
+3. ปศุสัตว์: แม่นาเรือกรอกครบทุกหมู่บ้านแล้ว (ยืนยัน 0 ตัวจริงทุกหมู่บ้าน) นครป่าหมากเริ่มกรอกแล้วบางส่วน
+   (2569-08) หมู่บ้านที่ยังไม่มีแถว livestock_report เลยถือเป็น "ยังไม่ยืนยัน" ไม่ใช่ "ยืนยันว่าไม่มี" —
+   ต่างจากแม่นาเรือที่กรอกยืนยัน 0 ไว้ครบทุกหมู่บ้านแล้วจริงๆ
 4. ไม่ได้หักฝนที่ตกลงมา (effective rainfall) ออกจาก agri_demand — คืนค่า "ความต้องการน้ำรวม" (ETc) ล้วนๆ
    ตามที่ 03_legacy_prototype/Final/crop_water_demand.py ออกแบบไว้เดิม (ดู docstring ของไฟล์นั้น ข้อ 208-211)
 """
@@ -67,47 +69,13 @@ def days_in_month(y: int, m: int) -> int:
 
 # ---------------------------------------------------------------------------
 # 2. mapping: "พืชหลัก" (ก่อน '+' หรือ '/' ตัวแรก) -> ชื่อกลุ่มใน crop_kc_reference
-#    ต้องอัปเดต dict นี้เมื่อมีชนิดพืชใหม่ที่ไม่เคยเจอมาก่อนใน crop_report — ถ้าไม่เจอ mapping สคริปต์
-#    จะข้ามแถวนั้นและ print คำเตือน (ไม่ raise error ทั้ง run เพราะพืชแปลกๆ พื้นที่น้อยไม่ควรบล็อกทั้งตำบล
-#    แต่ log ให้เห็นชัดเพื่อไปเพิ่ม mapping ทีหลัง)
+#    ย้ายมาเก็บในตาราง crop_group_alias แล้ว (เดิมเป็น PRIMARY_TO_GROUP dict ฝังในไฟล์นี้ — ย้าย 2569-08
+#    เพื่อให้ backend/routes.py อ่าน mapping เดียวกันได้ตอน validate ชื่อพืชที่ผู้ใช้กรอกเข้ามา ไม่ต้องพึ่งพา
+#    dict ที่ฝังอยู่ใน pipeline/ ซึ่งเป็นคนละ process/deployment กัน — ดู db.fetch_crop_group_alias())
+#    เพิ่มพืชชนิดใหม่ที่ crop_report เจอแล้วไม่มี mapping ให้ insert เข้าตาราง crop_group_alias โดยตรง
+#    ไม่ต้องแก้ไฟล์นี้อีกต่อไป — พืชที่ไม่มี mapping ในตารางจะถูกข้ามแถวนั้นและ print คำเตือน (ไม่ raise error
+#    ทั้ง run เพราะพืชแปลกๆ พื้นที่น้อยไม่ควรบล็อกทั้งตำบล แต่ log ให้เห็นชัดเพื่อไปเพิ่ม mapping ทีหลัง)
 # ---------------------------------------------------------------------------
-PRIMARY_TO_GROUP = {
-    "กระทุ่ม": "ไม้ยืนต้นปิดเรือนยอด",
-    "กล้วย": "ไม้ผลทั่วไป",
-    "เกษตรผสมผสาน": "พืชผัก",
-    "แก้วมังกร": "ไม้ผลทั่วไป",
-    "แตงโม": "แตงโม",
-    "ข้าวโพด": "ข้าวโพด",
-    "ข้าวโพด (ไร่เลื่อนลอย)": "ข้าวโพด",
-    "ขิง": "พืชผัก",
-    "จามจุรี (ก้ามปู)": "ไม้ยืนต้นปิดเรือนยอด",
-    "ทุ่งหญ้าเลี้ยงสัตว์": "ทุ่งหญ้าเลี้ยงสัตว์",
-    "ทุเรียน": "ไม้ผลทั่วไป",
-    "นาข้าว": "ข้าวนาปี",
-    "บัว": "บัว",
-    "ปาล์มน้ำมัน": "ไม้ยืนต้นปิดเรือนยอด",
-    "ไผ่": "ไม้ยืนต้นปิดเรือนยอด",
-    "ฝรั่ง": "ไม้ผลทั่วไป",
-    "พริก": "พริก",
-    "พืชผัก": "พืชผัก",
-    "มะขาม": "ไม้ผลทั่วไป",
-    "มะปราง": "ไม้ผลทั่วไป",
-    "มะพร้าว": "ไม้ผลทั่วไป",
-    "มะม่วง": "ไม้ผลทั่วไป",
-    "มันสำปะหลัง": "มันสำปะหลัง",
-    "ไม้ผลร้าง/เสื่อมโทรม": "พื้นที่รกร้าง/เสื่อมโทรม",
-    "ไม้ยืนต้นผสม": "ไม้ยืนต้นปิดเรือนยอด",
-    "ไม้ยืนต้นร้าง/เสื่อมโทรม": "พื้นที่รกร้าง/เสื่อมโทรม",
-    "ยางพารา": "ไม้ยืนต้นปิดเรือนยอด",
-    "ยูคาลิปตัส": "ไม้ยืนต้นปิดเรือนยอด",
-    "ลำไย": "ไม้ผลทั่วไป",
-    "ลิ้นจี่": "ไม้ผลทั่วไป",
-    "ส้ม": "ไม้ผลทั่วไป",
-    "สวนผลไม้ผสม": "ไม้ผลทั่วไป",
-    "สัก": "ไม้ยืนต้นปิดเรือนยอด",
-    "สับปะรด": "ไม้ผลทั่วไป",
-    "อ้อย": "อ้อย",
-}
 
 
 def primary_crop(raw_name: str) -> str:
@@ -250,6 +218,7 @@ def run_for_tambon(conn, tambon: dict, year: int, month: int) -> None:
             )
         return kc_cache[group_name]
 
+    crop_group_alias = db.fetch_crop_group_alias(conn)  # {primary_name: crop_group} — single source of truth
     villages = db.fetch_villages_with_population(conn, tambon_id)
     crop_rows = db.fetch_crop_report_latest(conn, tambon_id)
     livestock_rows = db.fetch_livestock_report_latest(conn, tambon_id)
@@ -266,7 +235,7 @@ def run_for_tambon(conn, tambon: dict, year: int, month: int) -> None:
         raw = row["crop_name"]
         area = float(row["planted_area_rai"])
         p = primary_crop(raw)
-        group = PRIMARY_TO_GROUP.get(p)
+        group = crop_group_alias.get(p)
         if group is None:
             unmapped.add((raw, p))
             continue
@@ -278,9 +247,9 @@ def run_for_tambon(conn, tambon: dict, year: int, month: int) -> None:
         village_agri_demand[vid] = village_agri_demand.get(vid, 0.0) + demand
 
     if unmapped:
-        print(f"  !!! พืชที่ไม่มี mapping ใน PRIMARY_TO_GROUP (ข้ามการคำนวณ agri สำหรับแถวนี้):")
+        print(f"  !!! พืชที่ไม่มี mapping ในตาราง crop_group_alias (ข้ามการคำนวณ agri สำหรับแถวนี้):")
         for raw, p in sorted(unmapped):
-            print(f"      raw={raw!r} primary={p!r} — ต้องเพิ่มใน PRIMARY_TO_GROUP ก่อนรันรอบถัดไป")
+            print(f"      raw={raw!r} primary={p!r} — ต้อง insert เข้าตาราง crop_group_alias ก่อนรันรอบถัดไป")
 
     livestock_demand_out = []
     village_livestock_demand: dict = {}

@@ -274,6 +274,10 @@ class CropReportResponse(BaseModel):
     planted_area_rai: float
     reported_month: date
     reported_by_role: str
+    # None ปกติ — ตั้งค่าเฉพาะตอน crop_name (ตัดเอาแค่ "พืชหลัก" ก่อน + หรือ / ตัวแรก) ไม่มีอยู่ในตาราง
+    # crop_group_alias เลย เพื่อเตือนผู้กรอก/แอดมินว่าแถวนี้บันทึกสำเร็จแล้วแต่จะไม่ถูกคิดน้ำเกษตรให้ จนกว่า
+    # จะมีคนเพิ่ม mapping เข้าตาราง crop_group_alias (ดู _unmapped_crop_warning ใน routes.py)
+    unmapped_crop_warning: str | None = None
 
 
 class CropReportBulkItem(BaseModel):

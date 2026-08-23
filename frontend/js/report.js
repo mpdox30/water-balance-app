@@ -409,6 +409,7 @@ document.getElementById("btn-submit-crops").addEventListener("click", async () =
   const submitBtn = document.getElementById("btn-submit-crops");
   submitBtn.disabled = true;
   const monthDate = reportMonthValue + "-01";
+  const unmappedWarnings = [];
   try {
     for (const r of rows) {
       const res = await authFetch("/crop-reports", {
@@ -422,8 +423,16 @@ document.getElementById("btn-submit-crops").addEventListener("click", async () =
       });
       const body = await res.json();
       if (!res.ok) throw new Error((body.detail || "บันทึกไม่สำเร็จ") + ' (พืช "' + r.crop_name + '")');
+      if (body.unmapped_crop_warning) unmappedWarnings.push(body.unmapped_crop_warning);
     }
-    statusEl.innerHTML = '<span class="ok">บันทึกรายงานพืชสำเร็จ ✓ (' + rows.length + " รายการ)</span>";
+    let html = '<span class="ok">บันทึกรายงานพืชสำเร็จ ✓ (' + rows.length + " รายการ)</span>";
+    if (unmappedWarnings.length) {
+      html +=
+        '<div class="fail" style="margin-top:0.5rem;">⚠ ' +
+        unmappedWarnings.join("<br>⚠ ") +
+        "</div>";
+    }
+    statusEl.innerHTML = html;
     document.getElementById("crop-rows").innerHTML = "";
     addCropRow();
     await loadExistingReports();
