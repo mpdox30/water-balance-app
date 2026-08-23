@@ -10,9 +10,13 @@ GET/POST /tambons, /villages, /water-sources, /crop-reports, /livestock-reports
 - POST /crop-reports, /livestock-reports — admin หรือ village_rep ของหมู่บ้านนั้นเท่านั้น (ตาม Phase 4)
 """
 import json
+import subprocess
+import sys
+from datetime import date
+from pathlib import Path
 
 import psycopg
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 
 import thai_admin_boundary
 from db import get_conn
@@ -564,6 +568,54 @@ def replace_reservoir_village_usage(
 
 
 # ============================================================
+# Auto-recompute สมดุลน้ำหลังบันทึกรายงานพืช/ปศุสัตว์ (Phase 6 — instant feedback แทนรอ cron รอบถัดไป)
+# ดู 00_docs/future-tambon-onboarding-plan.md ข้อ 7
+#
+# เรียก pipeline/balance_engine.py เป็น subprocess แยกกระบวนการ (ไม่ import ตรงๆ) เพราะ pipeline/db.py กับ
+# backend/db.py ชื่อโมดูลชนกัน (ทั้งคู่ชื่อ "db") — bare import ข้ามโฟลเดอร์เสี่ยงไปเจอโมดูลผิดตัวจาก
+# sys.modules cache (import ครั้งแรกของชื่อไหนจะถูก cache ไว้ ใครมา import ซ้ำชื่อเดิมได้ตัวเดิมกลับไปเสมอ
+# ไม่ว่าจะอยู่คนละไฟล์กัน) แยกโปรเซสตัดปัญหานี้ทิ้งไปเลย และ pipeline/ ไม่ต้องรู้จัก backend/ เลยแม้แต่น้อย
+# (ยังคง standalone รันจาก GitHub Actions ได้เหมือนเดิม ไม่ต้องแก้อะไรในนั้น)
+#
+# รันผ่าน BackgroundTasks (หลัง response ส่งกลับไปแล้ว) เพราะการกรอกรายงาน 1 ครั้งจากหน้า report.html อาจ
+# ยิง POST ทีละแถวติดกันหลายแถว (พืชหลายชนิด) — ถ้า block รอ recompute ทุกแถว (ซึ่งคำนวณทั้งตำบลใหม่ทุกครั้ง
+# ไม่ใช่แค่แถวเดียว) ผู้ใช้ต้องรอซ้ำซ้อนหลายรอบ ปล่อยเป็น background แล้วปล่อยให้ recompute ล่าสุดทับของเก่า
+# (idempotent อยู่แล้ว — ดู pipeline/db.py::write_balance_results ลบของเดือน/ตำบลนั้นทิ้งก่อนค่อย insert ใหม่)
+# ผลลัพธ์สุดท้ายเหมือนกันไม่ว่าจะรันกี่รอบซ้อนกัน แค่เร็วกว่าเพราะไม่ block response
+#
+# balance_engine.py เองมี fallback อยู่แล้วถ้ายังไม่มี et0_mm ของเดือนนั้น (ยังไม่ถึงรอบ GEE pipeline
+# ต้นเดือนถัดไป) จะ print คำเตือนแล้วข้ามตำบลนั้นไปเฉยๆ ไม่ error — ไม่ block การบันทึกรายงานที่เพิ่งสำเร็จ
+# ============================================================
+
+_PIPELINE_DIR = Path(__file__).resolve().parent.parent / "pipeline"
+_BALANCE_ENGINE = _PIPELINE_DIR / "balance_engine.py"
+
+
+def _recompute_balance_for_month(reported_month: date) -> None:
+    """best-effort: ความล้มเหลวใดๆ ที่นี่ต้องไม่กระทบรายงานที่บันทึกไปแล้ว (รันเป็น background task
+    หลัง response ส่งกลับไปแล้วเสมอ — ดูจุดเรียกใน create_crop_report / create_livestock_report)"""
+    if not _BALANCE_ENGINE.exists():
+        print(f"[balance-recompute] ข้าม: ไม่พบ {_BALANCE_ENGINE}")
+        return
+    try:
+        result = subprocess.run(
+            [sys.executable, str(_BALANCE_ENGINE), str(reported_month.year), str(reported_month.month)],
+            cwd=str(_PIPELINE_DIR),
+            timeout=60,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            print(
+                f"[balance-recompute] balance_engine.py exit={result.returncode}\n"
+                f"{(result.stdout or '')[-2000:]}\n{(result.stderr or '')[-2000:]}"
+            )
+    except Exception as exc:  # noqa: BLE001 — ตั้งใจกันไม่ให้ recompute ที่พังไปกระทบอะไรอื่น (background แล้ว)
+        print(f"[balance-recompute] ล้มเหลว: {exc}")
+
+
+# ============================================================
 # Crop reports
 # ============================================================
 
@@ -589,7 +641,9 @@ def list_crop_reports(village_id: str | None = Query(default=None), month: str |
 
 
 @router.post("/crop-reports", response_model=CropReportResponse, status_code=201)
-def create_crop_report(body: CropReportCreateRequest, user: dict = Depends(get_current_user)):
+def create_crop_report(
+    body: CropReportCreateRequest, background_tasks: BackgroundTasks, user: dict = Depends(get_current_user)
+):
     check_can_write_village(user, body.village_id)
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -601,6 +655,7 @@ def create_crop_report(body: CropReportCreateRequest, user: dict = Depends(get_c
             )
             row = cur.fetchone()
         conn.commit()
+    background_tasks.add_task(_recompute_balance_for_month, body.reported_month)
     return CropReportResponse(**{**row, "report_id": str(row["report_id"]), "village_id": str(row["village_id"])})
 
 
@@ -633,7 +688,9 @@ def list_livestock_reports(village_id: str | None = Query(default=None), month: 
 
 
 @router.post("/livestock-reports", response_model=LivestockReportResponse, status_code=201)
-def create_livestock_report(body: LivestockReportCreateRequest, user: dict = Depends(get_current_user)):
+def create_livestock_report(
+    body: LivestockReportCreateRequest, background_tasks: BackgroundTasks, user: dict = Depends(get_current_user)
+):
     check_can_write_village(user, body.village_id)
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -645,6 +702,7 @@ def create_livestock_report(body: LivestockReportCreateRequest, user: dict = Dep
             )
             row = cur.fetchone()
         conn.commit()
+    background_tasks.add_task(_recompute_balance_for_month, body.reported_month)
     return LivestockReportResponse(
         **{**row, "report_id": str(row["report_id"]), "village_id": str(row["village_id"])}
     )
