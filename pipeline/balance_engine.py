@@ -37,9 +37,12 @@ balance_engine.py — Phase 5: คำนวณสมดุลน้ำ 4 หม�
 =============================================================================
 ข้อจำกัดที่รู้อยู่แล้ว (ไม่ได้ปิดบัง แจ้งไว้ตรงนี้ให้เห็นชัด):
 =============================================================================
-1. planting_month_default เป็นค่าสมมติปฏิทินภูมิภาคเดียวทั้งตำบล ไม่ได้ยืนยันกับข้อมูลภาคสนามจริง หรือ
-   Sentinel-1 rice_paddy_monthly (มีตารางแล้วแต่ยังไม่มีข้อมูลจริง) — ตาม design doc ข้อ 3 นี่คือค่า
-   "Auto — ปฏิทินมาตรฐาน...เป็นค่าเริ่มต้น" ที่ตั้งใจให้ปรับตามข้อมูลจริงทีหลังได้
+1. planting_month_default ใน crop_kc_reference เป็นค่า global ตั้งจากข้อมูลจริงของแม่นาเรือ (ปฏิทิน
+   เพาะปลูกรายสัปดาห์_แม่นาเรือ.xlsx) ใช้เป็น fallback กลางสำหรับตำบลที่ยังไม่มีข้อมูลเฉพาะของตัวเอง
+   (เช่นตำบลใหม่ที่ยังไม่กรอก) — ตำบลที่พฤติกรรมปลูกต่างจากค่ากลาง (เดือนปลูกต่างกัน, ปลูกหลายรอบ/ปี เช่น
+   นาปี+นาปรัง, หรือปลูกต่อเนื่องทั้งปีแทนที่จะมีฤดูกาล) ให้เพิ่มแถว override ในตาราง cropping_calendar
+   แทน (ดู resolve_kc_for_group ด้านล่าง) ไม่ต้องแก้ค่า global — ยังไม่ผูกกับ Sentinel-1 rice_paddy_monthly
+   จริง (มีตารางแล้วแต่ยังไม่มีข้อมูล)
 2. Kc ของไม้ผล/ไม้ยืนต้นหลายชนิด (ลำไย ยางพารา สัก ฯลฯ) เป็นค่าประมาณกลุ่ม (ดู crop_kc_reference.note
    ของแต่ละแถว) เพราะสืบค้นวรรณกรรมแล้วไม่พบค่า Kc เฉพาะพันธุ์ที่เชื่อถือได้ในรอบการค้นคว้าตอน Phase 5
 3. ปศุสัตว์ปัจจุบัน = 0 ทุกหมู่บ้าน (ตามที่ผู้ใช้สั่งให้สมมติไปก่อน รอข้อมูลจริงจากพื้นที่)
@@ -73,6 +76,7 @@ PRIMARY_TO_GROUP = {
     "กล้วย": "ไม้ผลทั่วไป",
     "เกษตรผสมผสาน": "พืชผัก",
     "แก้วมังกร": "ไม้ผลทั่วไป",
+    "แตงโม": "แตงโม",
     "ข้าวโพด": "ข้าวโพด",
     "ข้าวโพด (ไร่เลื่อนลอย)": "ข้าวโพด",
     "ขิง": "พืชผัก",
@@ -91,7 +95,9 @@ PRIMARY_TO_GROUP = {
     "มะพร้าว": "ไม้ผลทั่วไป",
     "มะม่วง": "ไม้ผลทั่วไป",
     "มันสำปะหลัง": "มันสำปะหลัง",
+    "ไม้ผลร้าง/เสื่อมโทรม": "พื้นที่รกร้าง/เสื่อมโทรม",
     "ไม้ยืนต้นผสม": "ไม้ยืนต้นปิดเรือนยอด",
+    "ไม้ยืนต้นร้าง/เสื่อมโทรม": "พื้นที่รกร้าง/เสื่อมโทรม",
     "ยางพารา": "ไม้ยืนต้นปิดเรือนยอด",
     "ยูคาลิปตัส": "ไม้ยืนต้นปิดเรือนยอด",
     "ลำไย": "ไม้ผลทั่วไป",
@@ -174,6 +180,47 @@ def average_kc_for_month(kc_ref_row: dict, target_year: int, target_month: int):
 
 
 # ---------------------------------------------------------------------------
+# 3.5 cropping_calendar — override ปฏิทินปลูก/เส้นโค้ง Kc เฉพาะตำบล (เพิ่ม 2569-08 หลังพบว่าตำบลต่างกัน
+#     พฤติกรรมปลูกต่างกันมาก เช่น นครป่าหมากทำนา 2 รอบ/ปี (นาปี+นาปรัง) ขณะที่แม่นาเรือทำ 1 รอบ — ค่า
+#     planting_month_default ใน crop_kc_reference เดิมเป็น global ค่าเดียวใช้ทั้งระบบไม่พอแล้ว
+# ---------------------------------------------------------------------------
+
+def kc_for_calendar_row(row: dict, target_year: int, target_month: int):
+    """row: 1 แถวจาก cropping_calendar (dict_row) — คืน Kc ของเดือนนั้นถ้ารอบปลูกนี้ active, หรือ None ถ้าไม่
+    (is_continuous=True คืนค่า kc_mid คงที่เสมอไม่ว่าจะเดือนไหน — ปลูกต่อเนื่องทั้งปี ไม่มีฤดูกาล)"""
+    if row["is_continuous"]:
+        return float(row["kc_mid"])
+    # ใช้ตรรกะเดียวกับ average_kc_for_month โดย alias คีย์ planting_month -> planting_month_default
+    # เพื่อไม่ต้องเขียนตรรกะ growth-curve ซ้ำสองที่
+    fake_ref_row = {
+        "planting_month_default": row["planting_month"],
+        "kc_ini": row["kc_ini"], "kc_mid": row["kc_mid"], "kc_end": row["kc_end"],
+        "ini_days": row["ini_days"], "dev_days": row["dev_days"],
+        "mid_days": row["mid_days"], "late_days": row["late_days"],
+    }
+    return average_kc_for_month(fake_ref_row, target_year, target_month)
+
+
+def resolve_kc_for_group(group_name: str, calendar_rows_by_group: dict, kc_reference: dict,
+                          target_year: int, target_month: int):
+    """คืน Kc ของกลุ่มพืชนี้ในเดือนนี้สำหรับตำบลปัจจุบัน — เช็ค cropping_calendar เฉพาะตำบลก่อนเสมอ ถ้ามี
+    อย่างน้อย 1 แถวของ (ตำบลนี้, กลุ่มนี้) ถือว่า override เต็มชุด (ไม่ผสมกับค่า global) วนดูว่ารอบปลูกไหน
+    active เดือนนี้บ้าง (ปกติมีรอบเดียว active ต่อเดือน เพราะรอบปลูกไม่ควรเหลื่อมกัน) ถ้าไม่มีแถว
+    cropping_calendar เลยสำหรับกลุ่มนี้ fallback ไปใช้ค่า global ใน crop_kc_reference ตามเดิม"""
+    calendar_rows = calendar_rows_by_group.get(group_name)
+    if calendar_rows:
+        for row in calendar_rows:
+            kc = kc_for_calendar_row(row, target_year, target_month)
+            if kc is not None:
+                return kc
+        return None  # มีปฏิทินเฉพาะตำบลของกลุ่มนี้ แต่ไม่มีรอบไหน active เดือนนี้เลย (ช่วงพักแปลง)
+    kc_ref_row = kc_reference.get(group_name)
+    if kc_ref_row is None:
+        return None
+    return average_kc_for_month(kc_ref_row, target_year, target_month)
+
+
+# ---------------------------------------------------------------------------
 # 4. คำนวณต่อตำบล
 # ---------------------------------------------------------------------------
 
@@ -192,10 +239,16 @@ def run_for_tambon(conn, tambon: dict, year: int, month: int) -> None:
               f"et0_mm ของเดือนปฏิทินเดียวกันจากปีก่อนหน้า = {et0_mm:.1f} มม. แทนชั่วคราว "
               f"(จะคำนวณซ้ำอัตโนมัติด้วยค่าจริงเมื่อ pipeline/run_monthly.py รันของเดือนนี้สำเร็จ)")
 
-    kc_reference = db.fetch_kc_reference(conn)  # {group_name: dict_row}
-    kc_this_month = {}
-    for group_name, row in kc_reference.items():
-        kc_this_month[group_name] = average_kc_for_month(row, year, month)
+    kc_reference = db.fetch_kc_reference(conn)  # {group_name: dict_row} — ค่า global (fallback)
+    calendar_rows_by_group = db.fetch_cropping_calendar(conn, tambon_id)  # {group_name: [row, ...]} เฉพาะตำบลนี้
+    kc_cache: dict = {}
+
+    def kc_for_group(group_name: str):
+        if group_name not in kc_cache:
+            kc_cache[group_name] = resolve_kc_for_group(
+                group_name, calendar_rows_by_group, kc_reference, year, month
+            )
+        return kc_cache[group_name]
 
     villages = db.fetch_villages_with_population(conn, tambon_id)
     crop_rows = db.fetch_crop_report_latest(conn, tambon_id)
@@ -217,7 +270,7 @@ def run_for_tambon(conn, tambon: dict, year: int, month: int) -> None:
         if group is None:
             unmapped.add((raw, p))
             continue
-        kc = kc_this_month.get(group)
+        kc = kc_for_group(group)
         demand = 0.0
         if kc is not None and area > 0:
             demand = round(et0_mm * kc * area * MM_RAI_TO_CUM, 2)

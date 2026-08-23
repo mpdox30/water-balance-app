@@ -162,6 +162,25 @@ def fetch_kc_reference(conn) -> dict:
         return {row["crop_name"]: row for row in cur.fetchall()}
 
 
+def fetch_cropping_calendar(conn, tambon_id: str) -> dict:
+    """คืน {crop_group: [dict_row, ...]} จาก cropping_calendar เฉพาะตำบลนี้ — ใช้ override ปฏิทินปลูก/
+    เส้นโค้ง Kc ของ crop_kc_reference (ค่า global) เมื่อพฤติกรรมการปลูกของตำบลนี้ต่างจากค่าเริ่มต้น (เช่น
+    ทำนา 2 รอบ/ปี หรือเดือนปลูกไม่ตรงกับตำบลต้นแบบที่ใช้ตั้งค่า global) — crop_group ไหนไม่มีแถวในนี้เลย จะ
+    fallback ไปใช้ค่า global ตามเดิม (ดู pipeline/balance_engine.py::resolve_kc_for_group)"""
+    with conn.cursor() as cur:
+        cur.execute(
+            "select crop_group, cycle_name, is_continuous, planting_month, "
+            "kc_ini, kc_mid, kc_end, ini_days, dev_days, mid_days, late_days, source, note "
+            "from cropping_calendar where tambon_id = %s",
+            (tambon_id,),
+        )
+        rows = cur.fetchall()
+    result: dict = {}
+    for row in rows:
+        result.setdefault(row["crop_group"], []).append(row)
+    return result
+
+
 def fetch_villages_with_population(conn, tambon_id: str) -> list[dict]:
     with conn.cursor() as cur:
         cur.execute(
