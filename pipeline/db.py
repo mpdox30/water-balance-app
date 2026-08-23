@@ -73,22 +73,23 @@ def upsert_et0_monthly(conn, tambon_id: str, month: str, et0_mm: float | None):
 def upsert_zone_landcover_monthly(
     conn, village_id: str, month: str,
     forest_pct: float | None, agri_pct: float | None, residential_pct: float | None,
-    runoff_coefficient: float | None,
+    runoff_coefficient: float | None, source: str,
 ):
+    # 'source' บันทึกที่มาจริงของหมู่บ้านนี้ — 'LDD_landuse_2566' (ข้อมูลทางการ ปัจจุบันมีแค่แม่นาเรือ)
+    # หรือ 'ESA_WorldCover_v200' (fallback ผ่าน GEE สำหรับตำบลอื่น — ดู pipeline/landcover.py หัวไฟล์
+    # ส่วน 2026-08-23) — รับมาจาก compute_landcover_breakdown() แทนที่จะ hardcode ค่าเดียวเหมือนเดิม
     if runoff_coefficient is None:
         return
     with conn.cursor() as cur:
         cur.execute(
             "insert into zone_landcover_monthly "
             "(village_id, month, forest_pct, agri_pct, residential_pct, runoff_coefficient, source) "
-            # 'source' บันทึกที่มาจริง (ข้อมูลการใช้ที่ดินทางการปี 2566, ไม่ใช่ Sentinel-2 classification
-            # ของเราเอง — ดูเหตุผลการเปลี่ยนใน pipeline/landcover.py หัวไฟล์)
-            "values (%s, %s, %s, %s, %s, %s, 'LDD_landuse_2566') "
+            "values (%s, %s, %s, %s, %s, %s, %s) "
             "on conflict (village_id, month) do update set "
             "forest_pct = excluded.forest_pct, agri_pct = excluded.agri_pct, "
             "residential_pct = excluded.residential_pct, runoff_coefficient = excluded.runoff_coefficient, "
             "source = excluded.source",
-            (village_id, month, forest_pct, agri_pct, residential_pct, runoff_coefficient),
+            (village_id, month, forest_pct, agri_pct, residential_pct, runoff_coefficient, source),
         )
 
 

@@ -8,6 +8,11 @@ run_monthly.py — orchestrator หลักของ Phase 2 GEE pipeline: ร�
     python pipeline/run_monthly.py                  # ประมวลผลเดือนก่อนหน้า (default)
     python pipeline/run_monthly.py 2026 7            # ประมวลผลเดือน/ปีที่ระบุ (ใช้ตอนรันย้อนหลัง)
 
+ถ้าต้อง backfill หลายเดือนติดกัน (เช่น ตำบลใหม่ที่เพิ่งวาดขอบเขตหมู่บ้านเสร็จ ต้องดึงข้อมูลย้อนหลังให้
+ครบทุกเดือนที่ตำบลอื่นมีอยู่แล้ว) ใช้ pipeline/backfill_monthly.py แทน (เรียก run_for_tambon() ในไฟล์
+นี้ซ้ำหลายรอบ โดย init Earth Engine/DB แค่ครั้งเดียว) หรือสั่งผ่าน GitHub Actions
+workflow_dispatch ของ gee-pipeline.yml ช่อง backfill_start/backfill_end ก็ได้เช่นกัน
+
 Environment variables ที่ต้องตั้ง:
     DATABASE_URL          — เหมือนกับ backend (Supabase Transaction pooler)
     EE_SERVICE_ACCOUNT_KEY — เนื้อหา JSON เต็มของ GEE service account (ดู pipeline/gee_init.py)
@@ -59,12 +64,12 @@ def run_for_tambon(conn, tambon: dict, year: int, month: int) -> None:
             print(f"    [ข้าม] {village['name_th']}: ไม่มี geometry")
             continue
 
-        landcover = compute_landcover_breakdown(geom_geojson)
+        landcover = compute_landcover_breakdown(geom_geojson, cache_key=village_id)
         if landcover:
             db.upsert_zone_landcover_monthly(
                 conn, village_id, month_date,
                 landcover["forest_pct"], landcover["agri_pct"], landcover["residential_pct"],
-                landcover["runoff_coefficient"],
+                landcover["runoff_coefficient"], landcover["source"],
             )
 
         village_geom = ee.Geometry(geom_geojson)
