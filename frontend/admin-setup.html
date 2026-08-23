@@ -13,6 +13,11 @@
   .col-left { min-width: 0; }
   .col-right #map { height: calc(100vh - 8rem); min-height: 420px; position: sticky; top: 1rem; }
   .village-row-actions button { margin-top: 0; padding: 0.3rem 0.6rem; font-size: 0.85em; }
+  .res-matrix-card { border: 1px solid rgba(127,127,127,0.25); border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
+  .res-matrix-table input[type="number"] { width: 5.5rem; margin: 0; }
+  .res-matrix-table td, .res-matrix-table th { vertical-align: middle; }
+  .res-matrix-table .cell-fields { display: flex; gap: 0.4rem; align-items: center; margin-top: 0.25rem; }
+  .res-matrix-table .cell-fields.hidden { display: none; }
 </style>
 </head>
 <body>
@@ -150,7 +155,15 @@
       </section>
 
       <section id="step4" class="card step">
-        <h2>4) เสร็จสิ้น</h2>
+        <h2>4) จัดสรรอ่างเก็บน้ำระดับตำบลให้หมู่บ้าน (ถ้ามี)</h2>
+        <p class="muted">เฉพาะแหล่งน้ำที่ตอนเพิ่ม (ขั้นตอนที่ 3) เลือก "-- ระดับตำบล --" ไว้ (ไม่ผูกกับหมู่บ้านเดียว)
+        — ถ้าตำบลนี้ไม่มีแหล่งน้ำระดับตำบลเลย ข้ามขั้นตอนนี้ได้ ระบบจะรวมสระ/อ่างของแต่ละหมู่บ้านเข้า
+        ภาพรวมตำบลให้เองอัตโนมัติอยู่แล้ว ไม่บังคับต้องกรอกตารางนี้ให้ครบทุกแห่งก่อนถึงจะใช้งานได้</p>
+        <div id="reservoir-matrix-container"><p class="muted">ยังไม่มีแหล่งน้ำระดับตำบลให้จัดสรร</p></div>
+      </section>
+
+      <section id="step5" class="card step">
+        <h2>5) เสร็จสิ้น</h2>
         <p>เพิ่มตำบลใหม่พร้อมหมู่บ้าน/แหล่งน้ำแล้ว — ข้อมูลรายเดือน (พืช/ปศุสัตว์) ให้ตัวแทนหมู่บ้าน
         กรอกเองผ่านระบบ (Phase 4) ส่วนฝน/ET0/land cover จะคำนวณอัตโนมัติทุกต้นเดือน (Phase 2)</p>
         <a href="index.html"><button class="secondary">กลับหน้าแรก</button></a>

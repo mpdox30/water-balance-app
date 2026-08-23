@@ -15,6 +15,7 @@ let currentTambonBoundaryGeojson = null;
 let pendingLookupResult = null; // ผลจาก POST /admin/thai-tambon-lookup ก่อนกดยืนยัน
 let villages = []; // [{village_id, moo, name_th, area_rai, population, households, residential_rai, agri_rai, forest_rai, other_rai, data_year_be}]
 let editingVillageId = null; // village_id ที่กำลังแก้ไขอยู่ (null = โหมดเพิ่มใหม่)
+let sources = []; // [{source_id, name_th, source_type, village_id}] — village_id null = แหล่งน้ำระดับตำบล
 let activeDrawVillageId = null;
 let pinMode = false;
 let pendingMarker = null;
@@ -357,6 +358,141 @@ function renderVillageTable() {
     opt.textContent = "หมู่ " + v.moo + " " + v.name_th;
     selSourceVillage.appendChild(opt);
   });
+  // รายชื่อหมู่บ้านอาจเพิ่ม/แก้หลังจากสร้างแหล่งน้ำระดับตำบลไปแล้ว — sync ตาราง matrix (step 4) ให้ตรงด้วย
+  renderReservoirMatrixSection();
+}
+
+// ---------- step 4: จัดสรรอ่างเก็บน้ำระดับตำบลให้หมู่บ้าน ----------
+
+/** วาด/อัปเดตตาราง matrix (อ่างระดับตำบล x หมู่บ้าน) ใหม่ทั้งหมด — เรียกซ้ำได้ปลอดภัยทุกครั้งที่ sources/villages เปลี่ยน
+ * ถ้าไม่มีแหล่งน้ำระดับตำบลเลย (ทุกแห่งผูกกับหมู่บ้านเดียวไปแล้วตอนสร้าง) จะแสดงข้อความว่าไม่มีอะไรให้จัดสรร — ข้ามได้ */
+async function renderReservoirMatrixSection() {
+  const container = document.getElementById("reservoir-matrix-container");
+  if (!container) return;
+  const tambonSources = sources.filter((s) => !s.village_id);
+  if (tambonSources.length === 0) {
+    container.innerHTML = '<p class="muted">ยังไม่มีแหล่งน้ำระดับตำบลให้จัดสรร</p>';
+    return;
+  }
+  if (villages.length === 0) {
+    container.innerHTML = '<p class="muted">ยังไม่มีหมู่บ้าน (เพิ่มหมู่บ้านในขั้นตอนที่ 2 ก่อน)</p>';
+    return;
+  }
+  container.innerHTML = "";
+  for (const src of tambonSources) {
+    container.appendChild(await buildReservoirMatrixCard(src));
+  }
+}
+
+async function buildReservoirMatrixCard(src) {
+  const card = document.createElement("div");
+  card.className = "res-matrix-card";
+  const heading = document.createElement("h3");
+  heading.style.marginTop = "0";
+  heading.textContent = src.name_th;
+  const hint = document.createElement("p");
+  hint.className = "muted";
+  hint.style.marginTop = "-0.5rem";
+  hint.textContent = "เลือกหมู่บ้านที่ใช้น้ำจากแหล่งนี้จริง — เว้นว่างได้ถ้าไม่แน่ใจ ไม่บังคับต้องกรอกให้ครบ";
+  card.appendChild(heading);
+  card.appendChild(hint);
+
+  let existing = [];
+  try {
+    const res = await authFetch("/water-sources/" + src.source_id + "/village-usage");
+    if (res.ok) existing = await res.json();
+  } catch (err) {
+    // เงียบไว้ — โหลดของเดิมไม่สำเร็จก็แค่เริ่มจากตารางว่าง ไม่ block การแสดงผล
+  }
+
+  const table = document.createElement("table");
+  table.className = "res-matrix-table";
+  table.innerHTML = "<thead><tr><th>หมู่บ้าน</th><th>เกษตร</th><th>อุปโภคบริโภค</th></tr></thead><tbody></tbody>";
+  const tbody = table.querySelector("tbody");
+
+  villages.forEach((v) => {
+    const tr = document.createElement("tr");
+    const tdName = document.createElement("td");
+    tdName.textContent = "หมู่ " + v.moo + " " + v.name_th;
+    tr.appendChild(tdName);
+
+    ["agri", "domestic"].forEach((useType) => {
+      const td = document.createElement("td");
+      const existingRow = existing.find((e) => e.village_id === v.village_id && e.use_type === useType);
+
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = !!existingRow;
+      cb.dataset.villageId = v.village_id;
+      cb.dataset.useType = useType;
+
+      const fields = document.createElement("div");
+      fields.className = "cell-fields" + (existingRow ? "" : " hidden");
+      const popInput = document.createElement("input");
+      popInput.type = "number";
+      popInput.min = "0";
+      popInput.placeholder = "ประชากร";
+      popInput.dataset.field = "population";
+      if (existingRow && existingRow.population != null) popInput.value = existingRow.population;
+      const hhInput = document.createElement("input");
+      hhInput.type = "number";
+      hhInput.min = "0";
+      hhInput.placeholder = "ครัวเรือน";
+      hhInput.dataset.field = "households";
+      if (existingRow && existingRow.households != null) hhInput.value = existingRow.households;
+      fields.appendChild(popInput);
+      fields.appendChild(hhInput);
+
+      cb.addEventListener("change", () => fields.classList.toggle("hidden", !cb.checked));
+
+      td.appendChild(cb);
+      td.appendChild(fields);
+      tr.appendChild(td);
+    });
+
+    tbody.appendChild(tr);
+  });
+
+  const saveBtn = document.createElement("button");
+  saveBtn.textContent = "บันทึกการจัดสรร";
+  saveBtn.className = "secondary";
+  saveBtn.style.marginTop = "0.75rem";
+  const statusEl = document.createElement("div");
+  statusEl.className = "muted";
+  statusEl.style.marginTop = "0.4rem";
+
+  saveBtn.addEventListener("click", async () => {
+    const items = [];
+    tbody.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+      if (!cb.checked) return;
+      const td = cb.closest("td");
+      const pop = td.querySelector('[data-field="population"]').value;
+      const hh = td.querySelector('[data-field="households"]').value;
+      items.push({
+        village_id: cb.dataset.villageId,
+        use_type: cb.dataset.useType,
+        population: pop ? parseInt(pop, 10) : null,
+        households: hh ? parseInt(hh, 10) : null,
+      });
+    });
+    statusEl.textContent = "กำลังบันทึก...";
+    try {
+      const res = await authFetch("/water-sources/" + src.source_id + "/village-usage", {
+        method: "PUT",
+        body: JSON.stringify({ items }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.detail || "บันทึกไม่สำเร็จ");
+      statusEl.innerHTML = '<span class="ok">บันทึกแล้ว (' + items.length + " รายการ) ✓</span>";
+    } catch (err) {
+      statusEl.textContent = "บันทึกไม่สำเร็จ: " + err.message;
+    }
+  });
+
+  card.appendChild(table);
+  card.appendChild(saveBtn);
+  card.appendChild(statusEl);
+  return card;
 }
 
 /** อ่านฟิลด์ประชากร/ครัวเรือน/พื้นที่ใช้ที่ดินจากฟอร์ม (ทุกฟิลด์ไม่บังคับ — เว้นว่าง = ไม่ส่งค่า/null) */
@@ -634,6 +770,8 @@ document.getElementById("btn-save-source").addEventListener("click", async () =>
     if (!res.ok) throw new Error(body.detail || "บันทึกแหล่งน้ำไม่สำเร็จ");
     sourceMarkersGroup.addLayer(L.marker(latlng).bindPopup(body.name_th));
     addSourceRow(body, village_id);
+    sources.push({ source_id: body.source_id, name_th: body.name_th, source_type: body.source_type, village_id });
+    renderReservoirMatrixSection();
     map.removeLayer(pendingMarker);
     pendingMarker = null;
     pinMode = false;
@@ -643,6 +781,7 @@ document.getElementById("btn-save-source").addEventListener("click", async () =>
     document.getElementById("source-name").value = "";
     document.getElementById("source-capacity").value = "";
     document.getElementById("step4").classList.add("active");
+    document.getElementById("step5").classList.add("active");
   } catch (err) {
     statusEl.textContent = "บันทึกไม่สำเร็จ: " + err.message;
   }
@@ -802,12 +941,15 @@ document.getElementById("btn-confirm-source-upload").addEventListener("click", a
       if (!res.ok) throw new Error(body.detail || "บันทึกไม่สำเร็จ");
       sourceMarkersGroup.addLayer(L.marker([item.lat, item.lon]).bindPopup(body.name_th));
       addSourceRow(body, village_id);
+      sources.push({ source_id: body.source_id, name_th: body.name_th, source_type: body.source_type, village_id });
       successCount++;
     } catch (err) {
       alert('แถว "' + name_th + '" บันทึกไม่สำเร็จ: ' + err.message);
     }
   }
+  renderReservoirMatrixSection();
   document.getElementById("step4").classList.add("active");
+  document.getElementById("step5").classList.add("active");
   statusEl.textContent = "นำเข้าสำเร็จ " + successCount + " รายการ";
 });
 

@@ -40,6 +40,8 @@ from schemas import (
     VillageUpdateRequest,
     WaterSourceCreateRequest,
     WaterSourceResponse,
+    ReservoirVillageUsageReplaceRequest,
+    ReservoirVillageUsageResponse,
 )
 from security import (
     check_can_write_village,
@@ -488,6 +490,77 @@ def create_water_source(body: WaterSourceCreateRequest, _admin: dict = Depends(r
             row = cur.fetchone()
         conn.commit()
     return _row_to_source(row)
+
+
+# ============================================================
+# Reservoir -> village usage matrix (Phase 6)
+# ============================================================
+
+_RES_USAGE_COLS = "usage_id, source_id, village_id, use_type, households, population, source, note"
+
+
+def _row_to_reservoir_usage(row) -> ReservoirVillageUsageResponse:
+    return ReservoirVillageUsageResponse(
+        usage_id=str(row["usage_id"]),
+        source_id=str(row["source_id"]),
+        village_id=str(row["village_id"]),
+        use_type=row["use_type"],
+        households=row["households"],
+        population=row["population"],
+        source=row["source"],
+        note=row["note"],
+    )
+
+
+@router.get("/water-sources/{source_id}/village-usage", response_model=list[ReservoirVillageUsageResponse])
+def list_reservoir_village_usage(source_id: str):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"select {_RES_USAGE_COLS} from reservoir_village_usage "
+                "where source_id = %s order by village_id, use_type",
+                (source_id,),
+            )
+            rows = cur.fetchall()
+    return [_row_to_reservoir_usage(r) for r in rows]
+
+
+@router.put("/water-sources/{source_id}/village-usage", response_model=list[ReservoirVillageUsageResponse])
+def replace_reservoir_village_usage(
+    source_id: str, body: ReservoirVillageUsageReplaceRequest, _admin: dict = Depends(require_admin)
+):
+    """แทนที่ตาราง (matrix) การใช้อ่างนี้ทั้งหมดในคำสั่งเดียว — เหมาะกับ UI แบบเลือก/แก้ทีละอ่าง
+    (ลบแถวเดิมทั้งหมดของ source_id นี้ แล้ว insert ตามรายการที่ส่งมาใหม่ ภายใน transaction เดียว)"""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("select source_id from water_storage_sources where source_id = %s", (source_id,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="water source not found")
+
+            cur.execute("delete from reservoir_village_usage where source_id = %s", (source_id,))
+            for item in body.items:
+                cur.execute(
+                    "insert into reservoir_village_usage "
+                    "(source_id, village_id, use_type, households, population, source, note) "
+                    "values (%s, %s, %s, %s, %s, %s, %s)",
+                    (
+                        source_id,
+                        item.village_id,
+                        item.use_type,
+                        item.households,
+                        item.population,
+                        item.source,
+                        item.note,
+                    ),
+                )
+            cur.execute(
+                f"select {_RES_USAGE_COLS} from reservoir_village_usage "
+                "where source_id = %s order by village_id, use_type",
+                (source_id,),
+            )
+            rows = cur.fetchall()
+        conn.commit()
+    return [_row_to_reservoir_usage(r) for r in rows]
 
 
 # ============================================================

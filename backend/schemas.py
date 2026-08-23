@@ -181,6 +181,39 @@ class WaterSourceResponse(BaseModel):
     beneficiary_agri_rai: Optional[float] = None
 
 
+# ---------- Reservoir -> village usage matrix (Phase 6 — จัดสรรอ่างเก็บน้ำระดับตำบลให้หมู่บ้านที่ใช้จริง)
+# ออกแบบเป็น manual checkbox matrix (อ่าง x หมู่บ้าน) ไม่ใช่คำนวณจาก GIS — ตำบลที่ไม่มีข้อมูลโซนชลประทาน
+# (เช่น zone_b_irrigated.shp ของแม่นาเรือ) ก็กรอกได้ปกติ แถวไหนไม่กรอกเลย ระบบจะ pooled ที่ภาพรวมตำบลแทน
+# (ดู routes.py get_balance() และ 00_docs/future-tambon-onboarding-plan.md ข้อ 6) ----------
+
+class ReservoirVillageUsageItem(BaseModel):
+    """1 แถวของ matrix: อ่าง (source_id มาจาก path) x หมู่บ้าน x ประเภทการใช้ — households/population
+    ไม่บังคับ (กรอกได้ถ้ารู้ ไม่บล็อกถ้าไม่รู้ตัวเลขแน่ชัด)"""
+    village_id: str
+    use_type: Literal["agri", "domestic"]
+    households: Optional[int] = None
+    population: Optional[int] = None
+    source: Optional[str] = None
+    note: Optional[str] = None
+
+
+class ReservoirVillageUsageResponse(BaseModel):
+    usage_id: str
+    source_id: str
+    village_id: str
+    use_type: str
+    households: Optional[int] = None
+    population: Optional[int] = None
+    source: Optional[str] = None
+    note: Optional[str] = None
+
+
+class ReservoirVillageUsageReplaceRequest(BaseModel):
+    """แทนที่ข้อมูลการใช้อ่างนี้ทั้งหมดด้วยรายการใหม่ (ลบแถวเดิมที่ไม่อยู่ในลิสต์ + เพิ่มแถวที่ส่งมา) —
+    ออกแบบให้เหมาะกับ UI แบบ matrix (แก้ทีเดียวทั้งตาราง แล้วกดบันทึกครั้งเดียวต่ออ่าง 1 แห่ง)"""
+    items: list[ReservoirVillageUsageItem]
+
+
 # ---------- Crop / livestock reports ----------
 
 class CropReportCreateRequest(BaseModel):
