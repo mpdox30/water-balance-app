@@ -30,10 +30,16 @@ app = FastAPI(
 
 # เปิด CORS กว้างไว้ก่อน (frontend ยังเป็น static placeholder บน GitHub Pages, ไม่มี cookie/session) —
 # ปรับจำกัดเฉพาะ origin ของ GitHub Pages จริงได้ใน Phase 6 ตอนทำ dashboard จริงถ้าต้องการเข้มขึ้น
+#
+# allow_methods ต้องตรงกับ HTTP method ทั้งหมดที่ routes.py ใช้จริง — เดิมมีแค่ GET/POST ทำให้ตอนเพิ่ม
+# PATCH /villages/{id} และ PUT /water-sources/{id}/village-usage ทีหลัง (ทั้งคู่แก้ข้อมูลที่มีอยู่แล้ว)
+# ถูก browser บล็อกตั้งแต่ CORS preflight (ก่อนคำขอจริงจะถูกส่งไปหา backend เลยด้วยซ้ำ) เห็นแค่ "Failed
+# to fetch" เฉยๆ ไม่มี error message จาก backend ให้เห็น (อาการเดียวกับที่ unhandled_exception_handler
+# ด้านล่างอธิบายไว้ — CORS header หายไปจาก response แล้ว browser ไม่ยอมให้ frontend เห็น response เลย)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
     allow_headers=["*"],
 )
 
