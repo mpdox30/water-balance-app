@@ -1,0 +1,59 @@
+name: Balance engine (Phase 5 — สมดุลน้ำรายเดือน)
+
+# คำนวณสมดุลน้ำ (บริโภค/อุปโภค/เกษตร/ปศุสัตว์) จากข้อมูลที่มีอยู่แล้วในฐานข้อมูล — ไม่เรียก Earth Engine
+# เลย จึงไม่ต้องใช้ EE_SERVICE_ACCOUNT_KEY เหมือน gee-pipeline.yml ต้องการแค่ DATABASE_URL
+#
+# ต้องรัน "GEE monthly pipeline" (gee-pipeline.yml) ให้มี rainfall_monthly/et0_monthly ของเดือนนั้นๆ
+# ก่อนเสมอ ไม่งั้น balance_engine.py จะข้ามเดือน/ตำบลนั้นไปพร้อม log เตือน (ไม่ fabricate ค่าขึ้นเอง)
+#
+# ข้อจำกัดสำคัญที่ควรรู้ก่อนใช้ผลย้อนหลัง: พื้นที่ปลูกพืชที่ใช้คำนวณ agri_demand มาจากรายงานพืช "ล่าสุด"
+# ต่อหมู่บ้านเสมอ (ไม่มีข้อมูลพืชแยกรายเดือนย้อนหลังจริง) ตัวเลขย้อนหลังจึงสะท้อน "ถ้าปลูกพื้นที่เท่าปัจจุบัน
+# ในเดือนนั้นจะใช้น้ำเท่าไหร่" (ET0/Kc ต่างกันไปตามเดือนจริง) ไม่ใช่ประวัติการปลูกจริงของเดือนนั้น —
+# ดูรายละเอียดเต็มใน pipeline/backfill_balance.py หัวไฟล์
+#
+# ต้องตั้ง GitHub Secret ก่อนรัน (Settings → Secrets and variables → Actions) — ใช้ตัวเดียวกับ
+# gee-pipeline.yml อยู่แล้ว ไม่ต้องเพิ่มใหม่:
+#   DATABASE_URL — เหมือนกับที่ตั้งใน Render (Supabase Transaction pooler)
+
+on:
+  workflow_dispatch:
+    inputs:
+      year:
+        description: "รันเดือนเดียว — ปี (ค.ศ.) เว้นว่างทั้งคู่ = เดือนก่อนหน้าอัตโนมัติ (ไม่ใช้ร่วมกับ backfill_start/backfill_end ด้านล่าง)"
+        required: false
+      month:
+        description: "รันเดือนเดียว — เดือน (1-12)"
+        required: false
+      backfill_start:
+        description: "Backfill หลายเดือนติดกัน — เดือนเริ่ม รูปแบบ YYYY-MM เช่น 2025-06 (ใส่คู่กับ backfill_end ด้านล่าง ถ้าใส่ช่องนี้จะไม่สนใจ year/month ด้านบน)"
+        required: false
+      backfill_end:
+        description: "Backfill หลายเดือนติดกัน — เดือนสิ้นสุด รูปแบบ YYYY-MM เช่น 2026-07 (รวมเดือนนี้ด้วย)"
+        required: false
+
+jobs:
+  run-balance-engine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: ติดตั้ง dependencies
+        run: pip install -r pipeline/requirements.txt
+      - name: รัน balance engine
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -n "${{ github.event.inputs.backfill_start }}" ] && [ -n "${{ github.event.inputs.backfill_end }}" ]; then
+            START_YEAR=$(echo "${{ github.event.inputs.backfill_start }}" | cut -d- -f1)
+            START_MONTH=$(echo "${{ github.event.inputs.backfill_start }}" | cut -d- -f2)
+            END_YEAR=$(echo "${{ github.event.inputs.backfill_end }}" | cut -d- -f1)
+            END_MONTH=$(echo "${{ github.event.inputs.backfill_end }}" | cut -d- -f2)
+            echo "Backfill โหมด: $START_YEAR-$START_MONTH ถึง $END_YEAR-$END_MONTH"
+            python pipeline/backfill_balance.py "$START_YEAR" "$START_MONTH" "$END_YEAR" "$END_MONTH"
+          elif [ -n "${{ github.event.inputs.year }}" ] && [ -n "${{ github.event.inputs.month }}" ]; then
+            python pipeline/balance_engine.py "${{ github.event.inputs.year }}" "${{ github.event.inputs.month }}"
+          else
+            python pipeline/balance_engine.py
+          fi
