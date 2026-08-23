@@ -5,6 +5,11 @@ name: GEE monthly pipeline (rain / ET0 / land cover / rice paddy)
 # (47s), เขียนข้อมูลจริงครบ 18 หมู่บ้าน (rainfall_mm=197.4, et0_mm=36.1 สำหรับ 2026-07, ค่าสมเหตุสมผล
 # กับฤดูฝนภาคเหนือ) — เปิด cron ให้รันอัตโนมัติทุกต้นเดือนแล้ว ตามเกณฑ์ผ่าน Phase 2 ข้อ 2
 #
+# 2026-08-23: เพิ่มโหมด backfill หลายเดือน (backfill_start/backfill_end) ให้รัน
+# pipeline/backfill_monthly.py แทน — ใช้ตอนต้องการดึงข้อมูลย้อนหลังหลายเดือนติดกันโดยไม่ต้องกด
+# "Run workflow" ทีละเดือน (ไม่ต้องตั้ง credential บนเครื่องตัวเองเลย ใช้ GitHub Secret ที่มีอยู่แล้ว
+# รันบน GitHub-hosted runner ทั้งหมด)
+#
 # ต้องตั้ง GitHub Secret ก่อนรัน (Settings → Secrets and variables → Actions):
 #   EE_SERVICE_ACCOUNT_KEY — เนื้อหา JSON เต็มของ GEE service account (ผูกกับ GCP project ที่เปิด
 #                            ใช้ Earth Engine API แล้ว)
@@ -14,10 +19,16 @@ on:
   workflow_dispatch:
     inputs:
       year:
-        description: "ปี (ค.ศ.) — เว้นว่างไว้ = เดือนก่อนหน้าอัตโนมัติ"
+        description: "รันเดือนเดียว — ปี (ค.ศ.) เว้นว่างทั้งคู่ = เดือนก่อนหน้าอัตโนมัติ (ไม่ใช้ร่วมกับ backfill_start/backfill_end ด้านล่าง)"
         required: false
       month:
-        description: "เดือน (1-12) — เว้นว่างไว้ = เดือนก่อนหน้าอัตโนมัติ"
+        description: "รันเดือนเดียว — เดือน (1-12)"
+        required: false
+      backfill_start:
+        description: "Backfill หลายเดือนติดกัน — เดือนเริ่ม รูปแบบ YYYY-MM เช่น 2025-06 (ใส่คู่กับ backfill_end ด้านล่าง ถ้าใส่ช่องนี้จะไม่สนใจ year/month ด้านบน)"
+        required: false
+      backfill_end:
+        description: "Backfill หลายเดือนติดกัน — เดือนสิ้นสุด รูปแบบ YYYY-MM เช่น 2026-06 (รวมเดือนนี้ด้วย)"
         required: false
   schedule:
     - cron: "0 1 1 * *"  # ต้นเดือน 08:00 น. เวลาไทย (UTC+7)
@@ -37,7 +48,14 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           EE_SERVICE_ACCOUNT_KEY: ${{ secrets.EE_SERVICE_ACCOUNT_KEY }}
         run: |
-          if [ -n "${{ github.event.inputs.year }}" ] && [ -n "${{ github.event.inputs.month }}" ]; then
+          if [ -n "${{ github.event.inputs.backfill_start }}" ] && [ -n "${{ github.event.inputs.backfill_end }}" ]; then
+            START_YEAR=$(echo "${{ github.event.inputs.backfill_start }}" | cut -d- -f1)
+            START_MONTH=$(echo "${{ github.event.inputs.backfill_start }}" | cut -d- -f2)
+            END_YEAR=$(echo "${{ github.event.inputs.backfill_end }}" | cut -d- -f1)
+            END_MONTH=$(echo "${{ github.event.inputs.backfill_end }}" | cut -d- -f2)
+            echo "Backfill โหมด: $START_YEAR-$START_MONTH ถึง $END_YEAR-$END_MONTH"
+            python pipeline/backfill_monthly.py "$START_YEAR" "$START_MONTH" "$END_YEAR" "$END_MONTH"
+          elif [ -n "${{ github.event.inputs.year }}" ] && [ -n "${{ github.event.inputs.month }}" ]; then
             python pipeline/run_monthly.py "${{ github.event.inputs.year }}" "${{ github.event.inputs.month }}"
           else
             python pipeline/run_monthly.py
