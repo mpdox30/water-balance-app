@@ -315,6 +315,117 @@ document.getElementById("btn-confirm-tambon").addEventListener("click", async ()
   }
 });
 
+// ---------- step 1b: แก้ไข/เพิ่มเติมข้อมูลตำบลที่มีอยู่แล้ว ----------
+// (แยกจากขั้นตอนสร้างตำบลใหม่ด้านบน — โหลดหมู่บ้าน/แหล่งน้ำ/ขอบเขตเดิมทั้งหมดมาแสดง แล้วปลดล็อกทุกขั้นตอน
+// ให้แก้ไข/เพิ่มเติมได้เลย ไม่บังคับลำดับเชิงเส้นเหมือนตำบลใหม่ เพราะตำบลเดิมอาจกรอกมาถึงขั้นไหนก็ได้แล้ว)
+async function loadExistingTambonList() {
+  const sel = document.getElementById("sel-existing-tambon");
+  try {
+    const res = await authFetch("/tambons");
+    const tambons = await res.json();
+    tambons
+      .slice()
+      .sort((a, b) => a.name_th.localeCompare(b.name_th, "th"))
+      .forEach((t) => {
+        const opt = document.createElement("option");
+        opt.value = t.tambon_id;
+        opt.textContent = t.name_th + " (อ." + t.amphoe_th + " จ." + t.province_th + ")";
+        sel.appendChild(opt);
+      });
+  } catch (err) {
+    document.getElementById("existing-tambon-status").textContent = "โหลดรายชื่อตำบลที่มีอยู่ไม่สำเร็จ: " + err.message;
+  }
+}
+
+document.getElementById("sel-existing-tambon").addEventListener("change", (e) => {
+  document.getElementById("btn-edit-existing-tambon").disabled = !e.target.value;
+});
+
+document.getElementById("btn-edit-existing-tambon").addEventListener("click", async () => {
+  const tambonId = document.getElementById("sel-existing-tambon").value;
+  if (!tambonId) return;
+  const statusEl = document.getElementById("existing-tambon-status");
+  document.getElementById("btn-edit-existing-tambon").disabled = true;
+  try {
+    statusEl.textContent = "กำลังโหลดข้อมูลตำบล...";
+    const tRes = await authFetch("/tambons/" + tambonId + "?geom=true");
+    const tambon = await tRes.json();
+    if (!tRes.ok) throw new Error(tambon.detail || "โหลดตำบลไม่สำเร็จ");
+
+    currentTambonId = tambon.tambon_id;
+    currentTambonBoundaryGeojson = tambon.geom_geojson;
+    if (tambon.geom_geojson) {
+      previewLayerGroup.clearLayers();
+      const layer = L.geoJSON(tambon.geom_geojson, { style: { color: "#1a7f37", weight: 2, fillOpacity: 0.08 } });
+      previewLayerGroup.addLayer(layer);
+      map.fitBounds(layer.getBounds(), { padding: [20, 20] });
+    }
+
+    statusEl.textContent = "กำลังโหลดหมู่บ้าน...";
+    const vRes = await authFetch("/villages?tambon_id=" + encodeURIComponent(tambonId));
+    const villageRows = await vRes.json();
+    villages = villageRows.map((v) => Object.assign({}, v, { area_rai: null }));
+
+    // โหลดขอบเขตที่วาดไว้แล้วของแต่ละหมู่บ้าน (ถ้ามี) มาแสดงบนแผนที่ + รวมพื้นที่ + เก็บไว้เช็คทับซ้อนกับการวาดเพิ่ม
+    for (const v of villages) {
+      try {
+        const bRes = await authFetch("/village-boundary-parts?village_id=" + encodeURIComponent(v.village_id));
+        const parts = await bRes.json();
+        let total = 0;
+        parts.forEach((p) => {
+          total += p.area_rai;
+          const layer = L.geoJSON(p.geom_geojson, { style: { color: "#2266cc", weight: 2, fillOpacity: 0.12 } });
+          layer.bindPopup(v.name_th + " (" + p.area_rai.toFixed(1) + " ไร่)");
+          drawnVillageLayers.addLayer(layer);
+          recordVillageGeometry(v.village_id, p.geom_geojson);
+        });
+        if (total > 0) v.area_rai = total;
+      } catch (err) {
+        // ข้ามได้ถ้าหมู่บ้านนี้โหลดขอบเขตไม่สำเร็จ ไม่ block หมู่บ้านอื่น
+      }
+    }
+
+    statusEl.textContent = "กำลังโหลดแหล่งน้ำ...";
+    const sRes = await authFetch("/water-sources?tambon_id=" + encodeURIComponent(tambonId));
+    const sourceRows = await sRes.json();
+    sources = [];
+    document.getElementById("source-table").querySelector("tbody").innerHTML = "";
+    sourceRows.forEach((s) => {
+      sources.push({ source_id: s.source_id, name_th: s.name_th, source_type: s.source_type, village_id: s.village_id });
+      addSourceRow(s, s.village_id);
+      if (s.lat != null && s.lon != null) {
+        sourceMarkersGroup.addLayer(L.marker([s.lat, s.lon]).bindPopup(s.name_th));
+      }
+    });
+
+    enableVillageDrawTool();
+    renderVillageTable(); // sync ตัวเลือกหมู่บ้านในฟอร์มแหล่งน้ำ + เรียก renderReservoirMatrixSection() ต่อให้เองด้วย
+
+    // ปลดล็อกทุกขั้นตอนให้แก้ไข/เพิ่มเติมได้เลย (ไม่บังคับลำดับเชิงเส้นเหมือนตำบลใหม่)
+    ["step1", "step2", "step3", "step4", "step5"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.classList.add("active");
+    });
+    document.getElementById("step1").classList.add("done");
+
+    // ล็อกฝั่ง "สร้างตำบลใหม่" กันกดซ้ำจนสร้างตำบลซ้ำโดยไม่ตั้งใจ
+    document
+      .querySelectorAll("#sel-province, #sel-amphoe, #sel-tambon, #btn-load-boundary, #btn-confirm-tambon, #tambon-upload-file")
+      .forEach((el) => (el.disabled = true));
+    document.getElementById("sel-existing-tambon").disabled = true;
+
+    statusEl.innerHTML =
+      '<span class="ok">โหลดข้อมูลตำบล "' + tambon.name_th + '" สำเร็จ ✓</span> (' +
+      villages.length + " หมู่บ้าน, " + sources.length +
+      " แหล่งน้ำ) — เลื่อนลงไปแก้ไข/เพิ่มเติมข้อมูลในขั้นตอนด้านล่างได้เลย";
+  } catch (err) {
+    statusEl.textContent = "โหลดข้อมูลไม่สำเร็จ: " + err.message;
+    document.getElementById("btn-edit-existing-tambon").disabled = false;
+  }
+});
+
+loadExistingTambonList();
+
 // ---------- step 2: หมู่บ้าน + ขอบเขต ----------
 function renderVillageTable() {
   const table = document.getElementById("village-table");
