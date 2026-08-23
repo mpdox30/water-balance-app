@@ -61,10 +61,11 @@ async function authFetch(path, options = {}) {
   }
   const fetchOptions = Object.assign({}, options, { headers });
 
-  // MAX_ATTEMPTS = 12 (11 ช่วงรอ x 6 วินาที = ~66 วินาที บวกเวลา fetch() แต่ละครั้งเพิ่มอีก) — เดิมตั้งไว้แค่
-  // 6 ครั้ง (~30 วินาที) ซึ่งสั้นกว่าที่ข้อความ error บอกผู้ใช้ไว้ว่า "ใช้เวลาถึง ~1 นาที" มาก ทำให้ผู้ใช้เจอ
-  // "Failed to fetch" ทั้งที่ backend แค่ยังตื่นไม่ทัน (Render free tier cold start บางครั้งเข้าใกล้ 1 นาทีจริง)
-  const MAX_ATTEMPTS = 12;
+  // MAX_ATTEMPTS = 16 (15 ช่วงรอ x 6 วินาที = ~90 วินาที บวกเวลา fetch() แต่ละครั้งเพิ่มอีก) — Render เอง
+  // เตือนไว้ในหน้า dashboard ว่า free tier "can delay requests by 50 seconds or more" (เน้น "or more")
+  // เจอจริงว่าบางครั้งเกิน 66 วินาทีที่เคยตั้งไว้รอบก่อน โดยเฉพาะตอน request แรกๆ ยิงพร้อมกันหลายเส้น
+  // (เช่นหน้า admin-setup โหลด /tambons กับปุ่มบันทึกพร้อมกัน) แข่งกันปลุก instance เดียว
+  const MAX_ATTEMPTS = 16;
   let lastErr = null;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
@@ -93,3 +94,9 @@ function logout() {
   clearAuth();
   window.location.href = "login.html";
 }
+
+// Warm-up ping — ยิง GET /health ทันทีตอนโหลดหน้า (ไม่ await, ไม่บล็อกอะไร, เงียบถ้า fail) เพื่อให้
+// backend ฟรี (Render) เริ่มตื่นจาก sleep ตั้งแต่ตอนเปิดหน้า แทนที่จะเริ่มนับตอนผู้ใช้กดปุ่มบันทึกจริง —
+// ผู้ใช้มักใช้เวลาอ่าน/กรอกฟอร์มอย่างน้อย 30 วินาทีก่อนกดปุ่มอยู่แล้ว ช่วยซ่อน cold start latency
+// (~50 วินาทีขึ้นไปตาม Render) ไปได้เกือบหมดโดยแทบไม่ต้องรอเพิ่มตอนกดปุ่มจริงเลย
+fetch(BACKEND_URL + "/health").catch(() => {});
