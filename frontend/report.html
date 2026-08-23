@@ -116,6 +116,10 @@
     <div id="crop-existing"></div>
     <div id="crop-carry-note" class="muted already-note"></div>
 
+    <p class="muted" style="margin: 0.5rem 0;">พิมพ์ชื่อพืชให้ตรงกับที่ระบบรู้จัก (มีตัวช่วยแนะนำขึ้นมาให้เลือกตอนพิมพ์) —
+    ถ้าพิมพ์ชื่อที่ระบบยังไม่รู้จัก พื้นที่ส่วนนั้นจะยังถูกบันทึกไว้ แต่จะไม่ถูกคิดรวมในสมดุลน้ำ ถ้าไม่แน่ใจว่าพืชที่ปลูก
+    ใช้ชื่ออะไรในระบบ ติดต่อ admin เพื่อเพิ่มชื่อพืชเข้าระบบก่อนได้</p>
+
     <div id="crop-rows"></div>
     <button type="button" id="btn-add-crop-row" class="secondary">+ เพิ่มพืช</button>
 
@@ -155,16 +159,22 @@
 
 </div>
 
+<!-- รายการนี้ต้องตรงกับคีย์ใน PRIMARY_TO_GROUP (pipeline/balance_engine.py) เป๊ะๆ ไม่งั้นพืชที่กรอกจะถูกข้าม
+     เงียบๆ ไม่ถูกคิดในสมดุลน้ำ — เพิ่มชื่อพืชใหม่ในนี้ได้ แต่ต้องไปเพิ่ม mapping ที่ backend ด้วยเสมอ -->
 <datalist id="crop-name-suggestions">
-  <option value="ข้าว"></option>
-  <option value="ข้าวโพดเลี้ยงสัตว์"></option>
+  <option value="นาข้าว"></option>
+  <option value="ข้าวโพด"></option>
   <option value="อ้อย"></option>
   <option value="มันสำปะหลัง"></option>
   <option value="ยางพารา"></option>
   <option value="ปาล์มน้ำมัน"></option>
-  <option value="ผักสวนครัว"></option>
-  <option value="ไม้ผล"></option>
-  <option value="พืชไร่อื่นๆ"></option>
+  <option value="พืชผัก"></option>
+  <option value="กล้วย"></option>
+  <option value="มะม่วง"></option>
+  <option value="ลำไย"></option>
+  <option value="ทุเรียน"></option>
+  <option value="แตงโม"></option>
+  <option value="พริก"></option>
 </datalist>
 
 <script src="https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
