@@ -12,6 +12,12 @@
   .row-group button.remove-row { flex: 0 0 auto; margin-top: 0.25rem; padding: 0.5rem 0.7rem; }
   .already-note { margin-top: 0.5rem; }
   .month-badge { display: inline-block; font-weight: 600; }
+  .bulk-col-row { display: flex; gap: 0.6rem; align-items: center; padding: 0.35rem 0; border-bottom: 1px solid rgba(127,127,127,0.15); flex-wrap: wrap; }
+  .bulk-col-row .col-header { min-width: 11rem; font-weight: 600; }
+  .bulk-col-row .col-sample { opacity: 0.6; font-size: 0.85em; min-width: 8rem; }
+  .bulk-col-row input[type="text"] { flex: 1; min-width: 10rem; }
+  #bulk-crop-preview table { font-size: 0.85em; }
+  #bulk-crop-preview td, #bulk-crop-preview th { padding: 0.25rem 0.5rem; }
 </style>
 </head>
 <body>
@@ -43,6 +49,53 @@
     <input type="month" id="report-month">
 
     <div id="village-month-status" class="muted" style="margin-top:0.5rem;"></div>
+  </section>
+
+  <section id="step-bulk-crop" class="card" style="display:none;">
+    <h2>นำเข้าพื้นที่เกษตรหลายหมู่บ้านพร้อมกัน (admin)</h2>
+    <p class="muted">ใช้เมื่อมีตารางสรุปพื้นที่เกษตรทั้งตำบลอยู่แล้ว เช่น จากชั้นข้อมูล Landuse — ไฟล์แบบ 1 แถวต่อ
+    1 หมู่บ้าน หลายคอลัมน์ = พืชแต่ละชนิด (ต่างจากขั้นตอนที่ 2 ด้านล่างซึ่งกรอกได้ทีละหมู่บ้านเท่านั้น)</p>
+
+    <label for="bulk-crop-tambon">ตำบล</label>
+    <select id="bulk-crop-tambon"><option value="">-- เลือกตำบล --</option></select>
+
+    <label for="bulk-crop-file">ไฟล์ตารางสรุป (.xlsx / .xls / .csv)</label>
+    <input type="file" id="bulk-crop-file" accept=".xlsx,.xls,.csv" disabled>
+    <div id="bulk-crop-status" class="muted" style="margin-top:0.5rem;"></div>
+
+    <div id="bulk-crop-mapping" style="display:none; margin-top:1rem;">
+      <label for="bulk-crop-sheet">แผ่นงาน (sheet) ที่จะนำเข้า</label>
+      <select id="bulk-crop-sheet"></select>
+
+      <label for="bulk-crop-header-row" style="margin-top:0.75rem;">แถวที่เป็นหัวตาราง (header) ในไฟล์</label>
+      <select id="bulk-crop-header-row"></select>
+
+      <label for="bulk-crop-moo-col" style="margin-top:0.75rem;">คอลัมน์ "หมู่ที่" (ใช้จับคู่กับหมู่บ้านในระบบ)</label>
+      <select id="bulk-crop-moo-col"></select>
+
+      <label for="bulk-crop-total-col" style="margin-top:0.75rem;">คอลัมน์ผลรวมพื้นที่เกษตร (ถ้ามี — ไม่นำเข้าเป็นพืช
+      แต่ใช้ปรับพื้นที่เกษตรทั้งหมู่บ้านแทน)</label>
+      <select id="bulk-crop-total-col"><option value="">-- ไม่มี / ไม่ใช้ --</option></select>
+
+      <p class="muted" style="margin-top:0.75rem;">เลือกคอลัมน์ที่จะนำเข้าเป็น "พืช" แต่ละชนิด (แก้ชื่อพืชที่จะบันทึกได้ —
+      ค่าเริ่มต้นคือชื่อคอลัมน์เดิม) คอลัมน์ที่ไม่ใช่พื้นที่ปลูกจริง (เช่น ปศุสัตว์/บ่อปลา) ให้ติ๊กออก:</p>
+      <div id="bulk-crop-column-mapping"></div>
+
+      <label style="margin-top:0.75rem; display:flex; align-items:center; gap:0.5rem;">
+        <input type="checkbox" id="bulk-crop-agri-update" style="width:auto;">
+        อัปเดตพื้นที่เกษตรทั้งหมู่บ้าน (agri_rai) ด้วยคอลัมน์ผลรวมที่เลือกไว้ (แนะนำถ้าไฟล์นี้เป็นข้อมูล landuse ล่าสุด)
+      </label>
+      <label style="margin-top:0.4rem; display:flex; align-items:center; gap:0.5rem;">
+        <input type="checkbox" id="bulk-crop-replace" checked style="width:auto;">
+        แทนที่รายงานพืชเดิมของหมู่บ้านที่นำเข้าในเดือนนี้ (แนะนำ — กันข้อมูลซ้ำถ้า import ไฟล์เดิมที่แก้ไขแล้วซ้ำ)
+      </label>
+
+      <button type="button" id="btn-bulk-crop-preview" class="secondary" style="margin-top:0.75rem;">แสดงตัวอย่างก่อนบันทึก</button>
+    </div>
+
+    <div id="bulk-crop-preview" style="margin-top:0.75rem;"></div>
+    <button type="button" id="btn-bulk-crop-submit" style="display:none; margin-top:0.5rem;">บันทึกนำเข้าทั้งหมด</button>
+    <div id="bulk-crop-submit-status" class="muted" style="margin-top:0.5rem;"></div>
   </section>
 
   <section id="step-crop" class="card step">
@@ -118,5 +171,6 @@
 <script src="js/auth.js"></script>
 <script src="js/tabular-import.js"></script>
 <script src="js/report.js"></script>
+<script src="js/bulk-crop-import.js"></script>
 </body>
 </html>

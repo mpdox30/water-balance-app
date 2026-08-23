@@ -60,3 +60,72 @@ function getCellNumber(row, aliases) {
   const n = parseFloat(v);
   return isNaN(n) ? null : n;
 }
+
+/** อ่านไฟล์ .xlsx/.xls/.csv คืน Promise<Array<Array<any>>> (raw rows ของ "แผ่นงานแรก" เท่านั้น, ไม่สมมติว่า
+ * แถวแรกเป็น header) — ใช้กับตารางแบบ "1 แถวต่อ 1 หมู่บ้าน หลายคอลัมน์ = พืชแต่ละชนิด" ที่มักมีแถวหัวเรื่อง/
+ * หมายเหตุปนอยู่ก่อนแถวหัวตารางจริง ต่างจาก parseTabularFile() ที่ตัดสินใจแทนผู้ใช้ว่าแถวแรกคือ header เสมอ
+ * — ที่นี่ให้ผู้ใช้เลือกแถว header เองจาก preview (ไฟล์ที่มีหลายแผ่นงาน ให้ใช้ parseWorkbookAllSheetsAOA แทน) */
+function parseTabularFileAOA(file) {
+  return parseWorkbookAllSheetsAOA(file).then((wb) => wb.sheetsAOA[wb.sheetNames[0]]);
+}
+
+/** อ่านไฟล์ .xlsx/.xls/.csv ทุกแผ่นงานพร้อมกัน คืน Promise<{sheetNames: string[], sheetsAOA: {name: AOA}}>
+ * — ไฟล์จริงมักมีหลายแผ่นงาน (เช่น "ข้อมูลดิบ" แบบ 1 แถวต่อ 1 รายการ ปนอยู่กับ "สรุป...รายหมู่บ้าน" แบบ
+ * pivot ที่ใช้ import จริงได้) เลือกแผ่นงานแรกที่โหลดมาให้ผิดจะได้ column mapping ที่ไม่มีความหมายเลย
+ * จึงต้องให้ผู้ใช้เลือกแผ่นงานเองแทนที่จะเดา sheet[0] เสมอ */
+function parseWorkbookAllSheetsAOA(file) {
+  return new Promise((resolve, reject) => {
+    if (typeof XLSX === "undefined") {
+      reject(new Error("โหลดไลบรารีอ่านไฟล์ Excel/CSV ไม่สำเร็จ (XLSX) — ลองรีเฟรชหน้าใหม่"));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: "array" });
+        const sheetsAOA = {};
+        workbook.SheetNames.forEach((name) => {
+          sheetsAOA[name] = XLSX.utils.sheet_to_json(workbook.Sheets[name], {
+            header: 1,
+            defval: null,
+            raw: true,
+            blankrows: false,
+          });
+        });
+        resolve({ sheetNames: workbook.SheetNames, sheetsAOA });
+      } catch (err) {
+        reject(new Error("อ่านไฟล์ไม่สำเร็จ: " + err.message));
+      }
+    };
+    reader.onerror = () => reject(new Error("อ่านไฟล์ไม่สำเร็จ"));
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+/** เดาแถวที่เป็น header จริงจาก AOA — หาแถวแรกที่มีเซลล์ "ตรงเป๊ะ" กับคำว่า "หมู่ที่"/"หมู่"/"moo"/"village"
+ * ก่อน (กันไม่ให้ไปจับแถวหมายเหตุ/คำอธิบายที่บังเอิญมีคำว่า "หมู่บ้าน" ปนอยู่ในประโยคยาวๆ) ถ้าไม่เจอเลยค่อย
+ * fallback เป็นแถวแรกที่มีอย่างน้อย 3 เซลล์ไม่ว่างและมีคำว่า "หมู่" ปนอยู่ (แถวหัวตารางจริงมักมีหลายคอลัมน์
+ * ต่างจากแถวหมายเหตุที่มักมีข้อความยาวอยู่เซลล์เดียว) — คืน index (0-based) หรือ 0 ถ้าเดาไม่ได้เลย
+ * (ให้ผู้ใช้เลือกเองจาก dropdown แทน ไม่ block การทำงานต่อ) */
+function guessHeaderRowIndex(aoa) {
+  const exactKeywords = ["หมู่ที่", "หมู่", "moo", "village"];
+  const maxScan = Math.min(aoa.length, 15);
+  for (let i = 0; i < maxScan; i++) {
+    const row = aoa[i] || [];
+    const hit = row.some((cell) => {
+      if (cell === null || cell === undefined) return false;
+      const s = String(cell).trim().toLowerCase();
+      return exactKeywords.some((k) => s === k.toLowerCase());
+    });
+    if (hit) return i;
+  }
+  for (let i = 0; i < maxScan; i++) {
+    const row = aoa[i] || [];
+    const nonEmptyCount = row.filter((c) => c !== null && c !== undefined && String(c).trim() !== "").length;
+    if (nonEmptyCount < 3) continue;
+    const hit = row.some((cell) => cell !== null && cell !== undefined && String(cell).includes("หมู่"));
+    if (hit) return i;
+  }
+  return 0;
+}

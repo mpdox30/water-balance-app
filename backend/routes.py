@@ -23,6 +23,7 @@ from db import get_conn
 from schemas import (
     BalanceCategoryValue,
     BalanceResponse,
+    CropReportBulkRequest,
     CropReportCreateRequest,
     CropReportResponse,
     LivestockReportCreateRequest,
@@ -665,6 +666,54 @@ def create_crop_report(
         conn.commit()
     background_tasks.add_task(_recompute_balance_for_month, body.reported_month)
     return CropReportResponse(**{**row, "report_id": str(row["report_id"]), "village_id": str(row["village_id"])})
+
+
+@router.post("/crop-reports/bulk", response_model=list[CropReportResponse], status_code=201)
+def bulk_create_crop_reports(
+    body: CropReportBulkRequest, background_tasks: BackgroundTasks, admin: dict = Depends(require_admin)
+):
+    """นำเข้ารายงานพืชหลายหมู่บ้าน/หลายชนิดพืชในคำสั่งเดียว (admin เท่านั้น) — เพิ่มมาเพื่อรองรับกรณีมีตาราง
+    สรุปพื้นที่เกษตรทั้งตำบลอยู่แล้ว (เช่น สกัดจากชั้นข้อมูล Landuse แบบ 1 แถวต่อหมู่บ้าน) แทนที่จะต้องกรอกทีละ
+    หมู่บ้านทีละพืชผ่าน POST /crop-reports เดี่ยวๆ (ตามฟอร์มปกติใน report.html) — frontend ที่เรียก endpoint
+    นี้คือ js/bulk-crop-import.js (ส่วน "นำเข้าพื้นที่เกษตรหลายหมู่บ้านพร้อมกัน" ใน report.html)
+
+    ต่างจาก POST /crop-reports เดี่ยวๆ 3 จุด:
+    1) รับได้หลายแถว (หลายหมู่บ้าน x หลายพืช) พร้อมกันใน 1 request แทนที่จะวน POST ทีละแถวจาก frontend
+       (เร็วกว่า และ atomic กว่า — ถ้าแถวใดพัง จะ rollback ทั้งชุดแทนที่จะได้ผลลัพธ์ค้างครึ่งๆ กลางๆ)
+    2) ถ้า replace_existing=true (ค่าเริ่มต้น) จะลบรายงานพืชเดิมของทุก (village_id, reported_month) ที่ปรากฏ
+       อยู่ใน items ก่อน insert ชุดใหม่ทั้งหมด — ต่างจากฟอร์มเดี่ยวใน report.js ที่ "block" การส่งซ้ำแทน เพราะ
+       ที่นี่คือการ "แทนที่ทั้งชุดข้อมูลของหมู่บ้านนั้นในเดือนนั้น" ด้วยตารางสรุปที่นำเข้าใหม่ (เช่น ไฟล์ landuse
+       ที่แก้ไขแล้วนำมา import ซ้ำ) ไม่ใช่การเพิ่มทีละรายการที่ต้องกันซ้ำแบบ append
+    3) เรียก recompute background task แค่ครั้งเดียวต่อเดือนที่ import (ไม่ใช่ทุกแถวเหมือนฟอร์มเดี่ยว) กัน
+       overload ตอน import พร้อมกันหลายร้อยแถว
+
+    หมายเหตุ: ไม่ตรวจ "พื้นที่ปลูกรวมไม่เกิน agri_rai ของหมู่บ้าน" แบบที่ frontend ฟอร์มเดี่ยว (report.js) ทำ
+    เพราะข้อมูลที่เข้ามาทางนี้มักมาจากแหล่งที่แม่นกว่า/ใหม่กว่า (เช่น landuse overlay) ซึ่งควรเป็นตัวปรับปรุง
+    agri_rai ของหมู่บ้านเอง (ผ่าน PATCH /villages/{id} แยกต่างหาก) ไม่ใช่ถูกบล็อกด้วยค่า agri_rai เดิมที่อาจ
+    เก่ากว่า/ไม่แม่นเท่า"""
+    village_ids = list({item.village_id for item in body.items})
+    created = []
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            if body.replace_existing and village_ids:
+                cur.execute(
+                    "delete from crop_report where reported_month = %s and village_id = any(%s)",
+                    (body.reported_month, village_ids),
+                )
+            for item in body.items:
+                cur.execute(
+                    "insert into crop_report (village_id, crop_name, planted_area_rai, reported_month, reported_by_role) "
+                    "values (%s, %s, %s, %s, %s) "
+                    f"returning {_CROP_COLS}",
+                    (item.village_id, item.crop_name, item.planted_area_rai, body.reported_month, admin["role"]),
+                )
+                created.append(cur.fetchone())
+        conn.commit()
+    background_tasks.add_task(_recompute_balance_for_month, body.reported_month)
+    return [
+        CropReportResponse(**{**r, "report_id": str(r["report_id"]), "village_id": str(r["village_id"])})
+        for r in created
+    ]
 
 
 # ============================================================

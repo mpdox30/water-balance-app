@@ -276,6 +276,21 @@ class CropReportResponse(BaseModel):
     reported_by_role: str
 
 
+class CropReportBulkItem(BaseModel):
+    village_id: str
+    crop_name: str
+    planted_area_rai: float = Field(ge=0)
+
+
+class CropReportBulkRequest(BaseModel):
+    """นำเข้ารายงานพืชหลายหมู่บ้าน/หลายชนิดพืชพร้อมกัน — เหมาะกับกรณีมีตารางสรุปพื้นที่เกษตรทั้งตำบลอยู่แล้ว
+    (เช่น สกัดจากชั้นข้อมูล Landuse แบบ 1 แถวต่อหมู่บ้าน หลายคอลัมน์ = พืชแต่ละชนิด) แทนที่จะกรอกทีละหมู่บ้าน
+    ทีละพืชผ่านฟอร์มปกติ — reported_month ใช้ร่วมกันทุกแถวใน request เดียว (import 1 ครั้ง = 1 เดือน)"""
+    reported_month: date
+    items: list[CropReportBulkItem]
+    replace_existing: bool = True
+
+
 class LivestockReportCreateRequest(BaseModel):
     village_id: str
     species: str
