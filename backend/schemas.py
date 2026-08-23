@@ -350,3 +350,20 @@ class BalanceResponse(BaseModel):
     available_months: list[str]  # เดือนที่มีข้อมูล ET0/ฝนจริงแล้วเท่านั้น (ไม่ fabricate เดือนที่ยังไม่มี)
     villages: list[VillageBalanceResponse]
     tambon_overview: TambonBalanceOverview
+
+
+# ---------- Runoff estimate (แยกจาก BalanceResponse โดยเด็ดขาด — ดูคอมเมนต์ endpoint /runoff-estimate
+# ใน routes.py และตาราง runoff_estimate_monthly ใน Supabase — ยังไม่ตัดสินใจว่าจะรวมเข้าน้ำต้นทุนยังไง
+# เพิ่ม 2569-08 คู่กับส่วนแสดงผลแยกต่างหากในหน้า dashboard.html) ----------
+
+class RunoffMonthEntry(BaseModel):
+    month: str
+    runoff_volume_m3: float
+    n_villages_computed: int  # จำนวนหมู่บ้านที่มีข้อมูลจริงเดือนนั้น (เทียบกับ n_villages_total ของทั้งตำบล
+    # เพื่อบอกความครบถ้วน — บางหมู่บ้านอาจขาด runoff_coefficient/total_rai ของเดือนนั้น)
+
+
+class RunoffEstimateResponse(BaseModel):
+    tambon_id: str
+    n_villages_total: int
+    months: list[RunoffMonthEntry]

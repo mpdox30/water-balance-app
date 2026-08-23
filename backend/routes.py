@@ -51,6 +51,8 @@ from schemas import (
     DataCompletenessResponse,
     ReservoirCompleteness,
     VillageCompleteness,
+    RunoffMonthEntry,
+    RunoffEstimateResponse,
 )
 from security import (
     check_can_write_village,
@@ -939,6 +941,51 @@ def get_balance(tambon_id: str = Query(...)):
         villages=villages_out,
         tambon_overview=TambonBalanceOverview(months=overview_months, reservoir_capacity_m3=reservoir_total),
     )
+
+
+# ============================================================
+# Runoff estimate (แยกจาก /balance โดยเด็ดขาด — ดู pipeline/balance_engine.py::compute_runoff_estimate()
+# และคอมเมนต์ตาราง runoff_estimate_monthly ใน Supabase: ตั้งใจไม่รวมเข้า supply_cum เพราะเป็นศักยภาพน้ำท่า
+# ไม่ใช่น้ำที่ดักเก็บใช้ได้จริงทั้งหมด และเสี่ยงนับซ้ำกับน้ำในสระ/บ่อ — ยังไม่ตัดสินใจว่าจะเอามารวมยังไง
+# endpoint นี้ให้ dashboard.html โซน 7 แสดงเป็นข้อมูลอ้างอิงแยกต่างหากเท่านั้น ไม่ปนกับ /balance เลย
+# (เพิ่ม 2569-08)
+# ============================================================
+
+@router.get("/runoff-estimate", response_model=RunoffEstimateResponse)
+def get_runoff_estimate(tambon_id: str = Query(...)):
+    """ผลรวมประมาณการน้ำท่าทั้งตำบลต่อเดือน (sum ข้ามทุกหมู่บ้าน) — n_villages_computed ต่อเดือนบอกว่ามีกี่
+    หมู่บ้านที่มีข้อมูลจริง (เทียบกับ n_villages_total) เพราะบางหมู่บ้านอาจขาด runoff_coefficient/total_rai
+    ของเดือนนั้น แล้วถูกข้ามไปเงียบๆ ใน compute_runoff_estimate() — ไม่อยาก fabricate ตัวเลขที่ไม่ครบให้ดูเหมือนครบ"""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("select tambon_id from tambons where tambon_id = %s", (tambon_id,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="tambon not found")
+
+            cur.execute("select count(*) as n from villages where tambon_id = %s", (tambon_id,))
+            n_villages_total = cur.fetchone()["n"]
+
+            cur.execute(
+                "select r.month, sum(r.runoff_volume_m3) as runoff_volume_m3, "
+                "count(distinct r.village_id) as n_villages_computed "
+                "from runoff_estimate_monthly r "
+                "join villages v on v.village_id = r.village_id "
+                "where v.tambon_id = %s "
+                "group by r.month "
+                "order by r.month",
+                (tambon_id,),
+            )
+            rows = cur.fetchall()
+
+    months = [
+        RunoffMonthEntry(
+            month=str(r["month"]),
+            runoff_volume_m3=round(float(r["runoff_volume_m3"]), 2),
+            n_villages_computed=r["n_villages_computed"],
+        )
+        for r in rows
+    ]
+    return RunoffEstimateResponse(tambon_id=tambon_id, n_villages_total=n_villages_total, months=months)
 
 
 # ============================================================
