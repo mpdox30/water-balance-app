@@ -504,7 +504,9 @@ def create_water_source(body: WaterSourceCreateRequest, _admin: dict = Depends(r
 # Reservoir -> village usage matrix (Phase 6)
 # ============================================================
 
-_RES_USAGE_COLS = "usage_id, source_id, village_id, use_type, households, population, source, note"
+_RES_USAGE_COLS = (
+    "usage_id, source_id, village_id, use_type, households, population, irrigated_area_rai, source, note"
+)
 
 
 def _row_to_reservoir_usage(row) -> ReservoirVillageUsageResponse:
@@ -515,6 +517,7 @@ def _row_to_reservoir_usage(row) -> ReservoirVillageUsageResponse:
         use_type=row["use_type"],
         households=row["households"],
         population=row["population"],
+        irrigated_area_rai=float(row["irrigated_area_rai"]) if row["irrigated_area_rai"] is not None else None,
         source=row["source"],
         note=row["note"],
     )
@@ -549,14 +552,15 @@ def replace_reservoir_village_usage(
             for item in body.items:
                 cur.execute(
                     "insert into reservoir_village_usage "
-                    "(source_id, village_id, use_type, households, population, source, note) "
-                    "values (%s, %s, %s, %s, %s, %s, %s)",
+                    "(source_id, village_id, use_type, households, population, irrigated_area_rai, source, note) "
+                    "values (%s, %s, %s, %s, %s, %s, %s, %s)",
                     (
                         source_id,
                         item.village_id,
                         item.use_type,
                         item.households,
                         item.population,
+                        item.irrigated_area_rai,
                         item.source,
                         item.note,
                     ),

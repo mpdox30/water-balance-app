@@ -539,20 +539,35 @@ async function buildReservoirMatrixCard(src) {
 
       const fields = document.createElement("div");
       fields.className = "cell-fields" + (existingRow ? "" : " hidden");
-      const popInput = document.createElement("input");
-      popInput.type = "number";
-      popInput.min = "0";
-      popInput.placeholder = "ประชากร";
-      popInput.dataset.field = "population";
-      if (existingRow && existingRow.population != null) popInput.value = existingRow.population;
-      const hhInput = document.createElement("input");
-      hhInput.type = "number";
-      hhInput.min = "0";
-      hhInput.placeholder = "ครัวเรือน";
-      hhInput.dataset.field = "households";
-      if (existingRow && existingRow.households != null) hhInput.value = existingRow.households;
-      fields.appendChild(popInput);
-      fields.appendChild(hhInput);
+
+      // เกษตร -> พื้นที่ชลประทาน (ไร่) เท่านั้น (ประชากร/ครัวเรือนไม่มีความหมายกับการใช้น้ำเกษตร)
+      // อุปโภคบริโภค -> ประชากร/ครัวเรือน เหมือนเดิม — ทั้งคู่เป็นข้อมูลอ้างอิงเสริม ไม่เข้าสูตรคำนวณจริง
+      // (ตัวเลขเกษตรที่คำนวณจริงมาจาก crop_report, ตัวเลขอุปโภคจริงมาจากประชากร×50 ล./คน/วันเสมอ)
+      if (useType === "agri") {
+        const areaInput = document.createElement("input");
+        areaInput.type = "number";
+        areaInput.min = "0";
+        areaInput.step = "0.1";
+        areaInput.placeholder = "พื้นที่ชลประทาน (ไร่)";
+        areaInput.dataset.field = "irrigated_area_rai";
+        if (existingRow && existingRow.irrigated_area_rai != null) areaInput.value = existingRow.irrigated_area_rai;
+        fields.appendChild(areaInput);
+      } else {
+        const popInput = document.createElement("input");
+        popInput.type = "number";
+        popInput.min = "0";
+        popInput.placeholder = "ประชากร";
+        popInput.dataset.field = "population";
+        if (existingRow && existingRow.population != null) popInput.value = existingRow.population;
+        const hhInput = document.createElement("input");
+        hhInput.type = "number";
+        hhInput.min = "0";
+        hhInput.placeholder = "ครัวเรือน";
+        hhInput.dataset.field = "households";
+        if (existingRow && existingRow.households != null) hhInput.value = existingRow.households;
+        fields.appendChild(popInput);
+        fields.appendChild(hhInput);
+      }
 
       cb.addEventListener("change", () => fields.classList.toggle("hidden", !cb.checked));
 
@@ -577,14 +592,23 @@ async function buildReservoirMatrixCard(src) {
     tbody.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
       if (!cb.checked) return;
       const td = cb.closest("td");
-      const pop = td.querySelector('[data-field="population"]').value;
-      const hh = td.querySelector('[data-field="households"]').value;
-      items.push({
-        village_id: cb.dataset.villageId,
-        use_type: cb.dataset.useType,
-        population: pop ? parseInt(pop, 10) : null,
-        households: hh ? parseInt(hh, 10) : null,
-      });
+      if (cb.dataset.useType === "agri") {
+        const area = td.querySelector('[data-field="irrigated_area_rai"]').value;
+        items.push({
+          village_id: cb.dataset.villageId,
+          use_type: cb.dataset.useType,
+          irrigated_area_rai: area ? parseFloat(area) : null,
+        });
+      } else {
+        const pop = td.querySelector('[data-field="population"]').value;
+        const hh = td.querySelector('[data-field="households"]').value;
+        items.push({
+          village_id: cb.dataset.villageId,
+          use_type: cb.dataset.useType,
+          population: pop ? parseInt(pop, 10) : null,
+          households: hh ? parseInt(hh, 10) : null,
+        });
+      }
     });
     statusEl.textContent = "กำลังบันทึก...";
     try {

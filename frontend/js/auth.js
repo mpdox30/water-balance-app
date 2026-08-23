@@ -61,7 +61,10 @@ async function authFetch(path, options = {}) {
   }
   const fetchOptions = Object.assign({}, options, { headers });
 
-  const MAX_ATTEMPTS = 6; // รวมเวลารอสูงสุด ~30 วินาที ครอบคลุม cold start ของ Render free tier ส่วนใหญ่
+  // MAX_ATTEMPTS = 12 (11 ช่วงรอ x 6 วินาที = ~66 วินาที บวกเวลา fetch() แต่ละครั้งเพิ่มอีก) — เดิมตั้งไว้แค่
+  // 6 ครั้ง (~30 วินาที) ซึ่งสั้นกว่าที่ข้อความ error บอกผู้ใช้ไว้ว่า "ใช้เวลาถึง ~1 นาที" มาก ทำให้ผู้ใช้เจอ
+  // "Failed to fetch" ทั้งที่ backend แค่ยังตื่นไม่ทัน (Render free tier cold start บางครั้งเข้าใกล้ 1 นาทีจริง)
+  const MAX_ATTEMPTS = 12;
   let lastErr = null;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {

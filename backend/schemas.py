@@ -187,12 +187,16 @@ class WaterSourceResponse(BaseModel):
 # (ดู routes.py get_balance() และ 00_docs/future-tambon-onboarding-plan.md ข้อ 6) ----------
 
 class ReservoirVillageUsageItem(BaseModel):
-    """1 แถวของ matrix: อ่าง (source_id มาจาก path) x หมู่บ้าน x ประเภทการใช้ — households/population
-    ไม่บังคับ (กรอกได้ถ้ารู้ ไม่บล็อกถ้าไม่รู้ตัวเลขแน่ชัด)"""
+    """1 แถวของ matrix: อ่าง (source_id มาจาก path) x หมู่บ้าน x ประเภทการใช้ — ทุกฟิลด์ไม่บังคับ (กรอกได้ถ้ารู้
+    ไม่บล็อกถ้าไม่รู้ตัวเลขแน่ชัด) households/population มีความหมายเฉพาะ use_type='domestic' (อ้างอิงประชากร/
+    ครัวเรือนที่ได้รับประโยชน์ — ไม่ได้เข้าสูตรคำนวณจริง สูตรน้ำอุปโภคยังใช้ประชากร×50 ล./คน/วันเหมือนเดิม)
+    irrigated_area_rai มีความหมายเฉพาะ use_type='agri' (อ้างอิงพื้นที่ชลประทานจากอ่างนี้ — ไม่ได้เข้าสูตรคำนวณจริง
+    เช่นกัน ตัวเลขเกษตรที่ใช้คำนวณจริงมาจาก crop_report เสมอ) ฟิลด์ที่ไม่เกี่ยวกับ use_type นั้นๆ ปล่อยว่างได้"""
     village_id: str
     use_type: Literal["agri", "domestic"]
     households: Optional[int] = None
     population: Optional[int] = None
+    irrigated_area_rai: Optional[float] = None
     source: Optional[str] = None
     note: Optional[str] = None
 
@@ -204,6 +208,7 @@ class ReservoirVillageUsageResponse(BaseModel):
     use_type: str
     households: Optional[int] = None
     population: Optional[int] = None
+    irrigated_area_rai: Optional[float] = None
     source: Optional[str] = None
     note: Optional[str] = None
 
