@@ -214,6 +214,45 @@ class ReservoirVillageUsageReplaceRequest(BaseModel):
     items: list[ReservoirVillageUsageItem]
 
 
+# ---------- Data completeness dashboard (future-tambon-onboarding-plan.md ขั้นตอนที่ 8) ----------
+# เขียว = ครบ, เหลือง = มีบางส่วน, แดง = ยังไม่มีข้อมูลเลย — ดูรายละเอียดเกณฑ์แต่ละหมวดใน routes.py
+
+class CategoryCompleteness(BaseModel):
+    status: Literal["green", "yellow", "red"]
+    detail: Optional[str] = None
+
+
+class VillageCompleteness(BaseModel):
+    village_id: str
+    moo: int
+    name_th: str
+    village_info: CategoryCompleteness  # ประชากร/ครัวเรือน (ข้อ 1)
+    boundary: CategoryCompleteness  # ขอบเขตหมู่บ้าน (ข้อ 2)
+    water_supply: CategoryCompleteness  # แหล่งน้ำของหมู่บ้านเอง หรือได้รับจัดสรรจากอ่างตำบล (ข้อ 3-4)
+    crop: CategoryCompleteness  # พืชที่ปลูก (ข้อ 6)
+    livestock: CategoryCompleteness  # ปศุสัตว์ (ข้อ 8) — นับ "ยืนยันไม่มี" เป็นครบด้วย
+    overall_status: Literal["green", "yellow", "red"]
+
+
+class ReservoirCompleteness(BaseModel):
+    """ภาพรวมระดับตำบล (อ่างเก็บน้ำผูกได้หลายหมู่บ้าน ไม่ใช่ของหมู่บ้านใดหมู่บ้านหนึ่ง) — เป็นข้อมูลประกอบ
+    ไม่ใช้ gate ปุ่มคำนวณสมดุลน้ำโดยตรง เพราะบางตำบลอาจไม่มีอ่างเลยแล้วพึ่งสระ/แก้มลิงระดับหมู่บ้านแทนได้"""
+    total_reservoirs: int
+    reservoirs_with_usage: int
+    status: Literal["green", "yellow", "red"]
+    detail: Optional[str] = None
+
+
+class DataCompletenessResponse(BaseModel):
+    tambon_id: str
+    tambon_name: str
+    reservoir: ReservoirCompleteness
+    villages: list[VillageCompleteness]
+    total_villages: int
+    villages_green: int
+    can_compute_balance: bool
+
+
 # ---------- Crop / livestock reports ----------
 
 class CropReportCreateRequest(BaseModel):

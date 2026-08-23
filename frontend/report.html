@@ -65,6 +65,13 @@
 
     <div id="crop-rows"></div>
     <button type="button" id="btn-add-crop-row" class="secondary">+ เพิ่มพืช</button>
+
+    <div class="muted" style="margin-top:0.75rem;">— หรือถ้ามีรายชื่อพืช+พื้นที่ปลูกเป็นไฟล์อยู่แล้ว นำเข้าทีเดียวได้ —</div>
+    <label for="crop-bulk-file">ไฟล์ต้องมีคอลัมน์ "พืช"/"ชื่อพืช" และ "พื้นที่"/"ไร่" (ชื่อคอลัมน์ไม่ต้องตรงเป๊ะ) —
+    จะเติมเป็นแถวด้านบนให้ตรวจสอบ/แก้ไขก่อน ยังไม่บันทึกจนกว่าจะกด "บันทึกรายงานพืช"</label>
+    <input type="file" id="crop-bulk-file" accept=".xlsx,.xls,.csv">
+    <div id="crop-bulk-status" class="muted" style="margin-top:0.5rem;"></div>
+
     <div id="crop-validation" class="fail muted" style="margin-top:0.5rem;"></div>
     <button type="button" id="btn-submit-crops">บันทึกรายงานพืช</button>
     <div id="crop-submit-status" class="muted" style="margin-top:0.5rem;"></div>
@@ -107,7 +114,9 @@
   <option value="พืชไร่อื่นๆ"></option>
 </datalist>
 
+<script src="https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="js/auth.js"></script>
+<script src="js/tabular-import.js"></script>
 <script src="js/report.js"></script>
 </body>
 </html>

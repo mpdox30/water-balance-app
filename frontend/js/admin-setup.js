@@ -553,6 +553,131 @@ function endEditVillage() {
 
 document.getElementById("btn-cancel-edit-village").addEventListener("click", endEditVillage);
 
+// ---------- step 1 (bulk): นำเข้าหมู่บ้านหลายรายการทีเดียวจาก Excel/CSV ----------
+let villageBulkRows = []; // [{moo, name_th, population, households, residential_rai, agri_rai, forest_rai, other_rai, data_year_be}]
+
+const VILLAGE_COL_ALIASES = {
+  moo: ["หมู่ที่", "หมู่", "moo"],
+  name_th: ["ชื่อหมู่บ้าน", "ชื่อ", "name_th", "name"],
+  population: ["ประชากร", "population"],
+  households: ["ครัวเรือน", "households"],
+  residential_rai: ["พื้นที่อยู่อาศัย", "residential_rai"],
+  agri_rai: ["พื้นที่เกษตร", "agri_rai"],
+  forest_rai: ["พื้นที่ป่า", "forest_rai"],
+  other_rai: ["อื่นๆ", "other_rai"],
+  data_year_be: ["ปีข้อมูล", "data_year_be"],
+};
+
+document.getElementById("village-bulk-file").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const statusEl = document.getElementById("village-bulk-status");
+  statusEl.textContent = "กำลังอ่านไฟล์...";
+  try {
+    const rows = await parseTabularFile(file);
+    const round = (n) => (n == null ? null : Math.round(n));
+    villageBulkRows = rows
+      .map((r) => ({
+        moo: round(getCellNumber(r, VILLAGE_COL_ALIASES.moo)),
+        name_th: (getCell(r, VILLAGE_COL_ALIASES.name_th) || "").toString().trim(),
+        population: round(getCellNumber(r, VILLAGE_COL_ALIASES.population)),
+        households: round(getCellNumber(r, VILLAGE_COL_ALIASES.households)),
+        residential_rai: getCellNumber(r, VILLAGE_COL_ALIASES.residential_rai),
+        agri_rai: getCellNumber(r, VILLAGE_COL_ALIASES.agri_rai),
+        forest_rai: getCellNumber(r, VILLAGE_COL_ALIASES.forest_rai),
+        other_rai: getCellNumber(r, VILLAGE_COL_ALIASES.other_rai),
+        data_year_be: round(getCellNumber(r, VILLAGE_COL_ALIASES.data_year_be)),
+      }))
+      .filter((r) => r.moo && r.name_th);
+    renderVillageBulkTable();
+    const skipped = rows.length - villageBulkRows.length;
+    statusEl.textContent =
+      "อ่านไฟล์สำเร็จ พบ " + villageBulkRows.length + " แถวที่ใช้ได้ (มีหมู่+ชื่อครบ)" +
+      (skipped > 0 ? " — ข้าม " + skipped + " แถวที่ไม่มีหมู่หรือชื่อ" : "") + " — ตรวจสอบก่อนกดยืนยัน";
+  } catch (err) {
+    statusEl.textContent = err.message;
+  }
+});
+
+function renderVillageBulkTable() {
+  const table = document.getElementById("village-bulk-table");
+  const tbody = table.querySelector("tbody");
+  tbody.innerHTML = "";
+  const confirmBtn = document.getElementById("btn-confirm-village-bulk");
+  if (villageBulkRows.length === 0) {
+    table.style.display = "none";
+    confirmBtn.style.display = "none";
+    return;
+  }
+  table.style.display = "";
+  confirmBtn.style.display = "";
+  villageBulkRows.forEach((r) => {
+    const existing = villages.find((v) => v.moo === r.moo);
+    const tr = document.createElement("tr");
+    tr.innerHTML =
+      "<td>" + r.moo + "</td><td>" + r.name_th + "</td>" +
+      "<td>" + (r.population != null ? r.population : "-") + "</td>" +
+      "<td>" + (r.households != null ? r.households : "-") + "</td>" +
+      "<td>" + (existing ? "จะแก้ไขหมู่ " + r.moo + " ที่มีอยู่แล้ว" : "จะสร้างใหม่") + "</td>";
+    tbody.appendChild(tr);
+  });
+}
+
+document.getElementById("btn-confirm-village-bulk").addEventListener("click", async () => {
+  const statusEl = document.getElementById("village-bulk-status");
+  let successCount = 0;
+  const failed = [];
+  for (const r of villageBulkRows) {
+    const optionalFields = {
+      population: r.population,
+      households: r.households,
+      residential_rai: r.residential_rai,
+      agri_rai: r.agri_rai,
+      forest_rai: r.forest_rai,
+      other_rai: r.other_rai,
+      data_year_be: r.data_year_be,
+    };
+    const existing = villages.find((v) => v.moo === r.moo);
+    try {
+      if (existing) {
+        const res = await authFetch("/villages/" + existing.village_id, {
+          method: "PATCH",
+          body: JSON.stringify({ name_th: r.name_th, ...optionalFields }),
+        });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.detail || "แก้ไขไม่สำเร็จ");
+        Object.assign(existing, body);
+      } else {
+        const res = await authFetch("/villages", {
+          method: "POST",
+          body: JSON.stringify({
+            tambon_id: currentTambonId,
+            moo: r.moo,
+            name_th: r.name_th,
+            name_source: "bulk import (Excel/CSV)",
+            ...optionalFields,
+          }),
+        });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.detail || "เพิ่มไม่สำเร็จ");
+        villages.push({ ...body, area_rai: 0 });
+      }
+      successCount++;
+    } catch (err) {
+      failed.push("หมู่ " + r.moo + " " + r.name_th + ": " + err.message);
+    }
+  }
+  renderVillageTable();
+  statusEl.innerHTML =
+    '<span class="ok">นำเข้าสำเร็จ ' + successCount + " รายการ</span>" +
+    (failed.length ? ' <span class="fail">— ล้มเหลว ' + failed.length + " รายการ: " + failed.join("; ") + "</span>" : "");
+  document.getElementById("village-bulk-table").style.display = "none";
+  document.getElementById("btn-confirm-village-bulk").style.display = "none";
+  document.getElementById("village-bulk-file").value = "";
+  villageBulkRows = [];
+  document.getElementById("step3").classList.add("active");
+});
+
 document.getElementById("btn-add-village").addEventListener("click", async () => {
   const moo = parseInt(document.getElementById("village-moo").value, 10);
   const name_th = document.getElementById("village-name").value.trim();
@@ -740,6 +865,24 @@ document.getElementById("btn-pin-mode").addEventListener("click", () => {
   }
 });
 
+const SOURCE_TYPE_LABELS = {
+  pond: "สระ",
+  reservoir: "อ่างเก็บน้ำ",
+  groundwater_well: "บ่อบาดาล",
+  mountain_spring: "น้ำผุดจากภูเขา",
+  weir: "ฝาย",
+  small_water_source: "แหล่งน้ำขนาดเล็กอื่นๆ",
+  purchased_external: "ซื้อน้ำจากภายนอก",
+};
+// ฝายไม่มีความจุ (เก็บมิติ/สภาพเป็นข้อความแทน) — ดู 00_docs/future-tambon-onboarding-plan.md ขั้นตอนที่ 3
+const SOURCE_TYPES_WITHOUT_CAPACITY = new Set(["weir"]);
+
+document.getElementById("source-type").addEventListener("change", (e) => {
+  const noCapacity = SOURCE_TYPES_WITHOUT_CAPACITY.has(e.target.value);
+  document.getElementById("source-capacity-group").style.display = noCapacity ? "none" : "";
+  document.getElementById("source-dimension-group").style.display = noCapacity ? "" : "none";
+});
+
 document.getElementById("btn-save-source").addEventListener("click", async () => {
   if (!pendingMarker) return;
   const statusEl = document.getElementById("pin-status");
@@ -748,9 +891,17 @@ document.getElementById("btn-save-source").addEventListener("click", async () =>
   const source_type = document.getElementById("source-type").value;
   const village_id = document.getElementById("source-village").value || null;
   const capacityRaw = document.getElementById("source-capacity").value;
+  const dimensionRaw = document.getElementById("source-dimension").value.trim();
   if (!name_th) {
     statusEl.textContent = "กรอกชื่อแหล่งน้ำก่อน";
     return;
+  }
+  const isWeir = SOURCE_TYPES_WITHOUT_CAPACITY.has(source_type);
+  let capacitySourceNote = null;
+  if (isWeir && dimensionRaw) {
+    capacitySourceNote = dimensionRaw;
+  } else if (!isWeir && capacityRaw) {
+    capacitySourceNote = "กรอกโดย admin ตอน setup (Phase 3)";
   }
   try {
     const res = await authFetch("/water-sources", {
@@ -762,8 +913,8 @@ document.getElementById("btn-save-source").addEventListener("click", async () =>
         name_th,
         lat: latlng.lat,
         lon: latlng.lng,
-        stored_capacity_m3: capacityRaw ? parseFloat(capacityRaw) : null,
-        capacity_source_note: capacityRaw ? "กรอกโดย admin ตอน setup (Phase 3)" : null,
+        stored_capacity_m3: !isWeir && capacityRaw ? parseFloat(capacityRaw) : null,
+        capacity_source_note: capacitySourceNote,
       }),
     });
     const body = await res.json();
@@ -780,6 +931,7 @@ document.getElementById("btn-save-source").addEventListener("click", async () =>
     document.getElementById("pin-status").textContent = "บันทึกแล้ว — ปักหมุดจุดถัดไปได้เลย";
     document.getElementById("source-name").value = "";
     document.getElementById("source-capacity").value = "";
+    document.getElementById("source-dimension").value = "";
     document.getElementById("step4").classList.add("active");
     document.getElementById("step5").classList.add("active");
   } catch (err) {
@@ -794,29 +946,15 @@ function addSourceRow(source, village_id) {
   const villageLabel = village_id
     ? (villages.find((v) => v.village_id === village_id) || {}).name_th || "-"
     : "ระดับตำบล";
-  const typeLabels = {
-    pond: "สระ",
-    reservoir: "อ่างเก็บน้ำ",
-    groundwater_well: "บ่อบาดาล",
-    mountain_spring: "น้ำผุดจากภูเขา",
-    purchased_external: "ซื้อน้ำจากภายนอก",
-  };
   const tr = document.createElement("tr");
   tr.innerHTML =
-    "<td>" + source.name_th + "</td><td>" + (typeLabels[source.source_type] || source.source_type) +
+    "<td>" + source.name_th + "</td><td>" + (SOURCE_TYPE_LABELS[source.source_type] || source.source_type) +
     "</td><td>" + villageLabel + "</td>";
   tbody.appendChild(tr);
 }
 
 // ---------- step 3b: อัปโหลดแหล่งน้ำจากไฟล์ ----------
 let uploadedSourceFeatures = []; // [{lat, lon, name_th, source_type, stored_capacity_m3}]
-const SOURCE_TYPE_LABELS = {
-  pond: "สระ",
-  reservoir: "อ่างเก็บน้ำ",
-  groundwater_well: "บ่อบาดาล",
-  mountain_spring: "น้ำผุดจากภูเขา",
-  purchased_external: "ซื้อน้ำจากภายนอก",
-};
 
 document.getElementById("source-upload-file").addEventListener("change", async (e) => {
   const file = e.target.files[0];

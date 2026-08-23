@@ -24,6 +24,7 @@
 <div class="topbar">
   <strong>ตั้งค่าตำบลใหม่ (admin-setup)</strong>
   <div>
+    <a href="data-completeness.html" style="margin-right:0.75rem;">ความครบถ้วนข้อมูล</a>
     <span id="whoami" class="muted"></span>
     <button class="secondary" onclick="logout()" style="margin-top:0; margin-left:0.75rem;">ออกจากระบบ</button>
   </div>
@@ -94,6 +95,18 @@
         <button id="btn-cancel-edit-village" class="secondary" style="display:none;">ยกเลิกแก้ไข</button>
         <div id="village-add-status" class="muted" style="margin-top:0.5rem;"></div>
 
+        <div class="muted" style="margin-top:1rem;">— หรือนำเข้าทีเดียวหลายหมู่บ้านจาก Excel/CSV —</div>
+        <label for="village-bulk-file">ไฟล์ต้องมีคอลัมน์ "หมู่"/"หมู่ที่" และ "ชื่อ"/"ชื่อหมู่บ้าน" (บังคับ) —
+        คอลัมน์ประชากร/ครัวเรือน/พื้นที่อยู่อาศัย/พื้นที่เกษตร/พื้นที่ป่า/อื่นๆ ไม่บังคับ (ชื่อคอลัมน์ไม่ต้องตรงเป๊ะ)
+        หมู่ที่มีอยู่แล้วในตารางด้านล่างจะถูก "แก้ไข" ด้วยข้อมูลใหม่ ไม่สร้างซ้ำ</label>
+        <input type="file" id="village-bulk-file" accept=".xlsx,.xls,.csv">
+        <div id="village-bulk-status" class="muted" style="margin-top:0.5rem;"></div>
+        <table id="village-bulk-table" style="display:none;">
+          <thead><tr><th>หมู่</th><th>ชื่อ</th><th>ประชากร</th><th>ครัวเรือน</th><th>สถานะ</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <button id="btn-confirm-village-bulk" class="secondary" style="display:none;">ยืนยันนำเข้าทั้งหมด</button>
+
         <table id="village-table" style="display:none;">
           <thead><tr><th>หมู่</th><th>ชื่อ</th><th>ประชากร</th><th>ครัวเรือน</th><th>ขอบเขตที่วาด (ไร่)</th><th></th></tr></thead>
           <tbody></tbody>
@@ -116,7 +129,7 @@
       </section>
 
       <section id="step3" class="card step">
-        <h2>3) เพิ่มแหล่งน้ำ (สระ/อ่างเก็บน้ำ/บาดาล ฯลฯ)</h2>
+        <h2>3) เพิ่มแหล่งน้ำ (สระ/อ่างเก็บน้ำ/บาดาล/ฝาย ฯลฯ)</h2>
         <p class="muted">คลิกตำแหน่งบนแผนที่เพื่อปักหมุด แล้วกรอกรายละเอียด — ไม่มีช่องพิมพ์พิกัดเอง</p>
 
         <label for="source-name">ชื่อแหล่งน้ำ</label>
@@ -127,12 +140,20 @@
           <option value="reservoir">อ่างเก็บน้ำ</option>
           <option value="groundwater_well">บ่อบาดาล</option>
           <option value="mountain_spring">น้ำผุดจากภูเขา</option>
+          <option value="weir">ฝาย</option>
+          <option value="small_water_source">แหล่งน้ำขนาดเล็กอื่นๆ (บ่อในไร่นา ฯลฯ)</option>
           <option value="purchased_external">ซื้อน้ำจากภายนอก</option>
         </select>
         <label for="source-village">หมู่บ้านที่เกี่ยวข้อง (เว้นว่าง = ใช้ร่วมทั้งตำบล)</label>
         <select id="source-village"><option value="">-- ระดับตำบล --</option></select>
-        <label for="source-capacity">ปริมาตรกักเก็บ (ลบ.ม., ถ้ามี)</label>
-        <input type="number" id="source-capacity" min="0">
+        <div id="source-capacity-group">
+          <label for="source-capacity">ปริมาตรกักเก็บ (ลบ.ม., ถ้ามี)</label>
+          <input type="number" id="source-capacity" min="0">
+        </div>
+        <div id="source-dimension-group" style="display:none;">
+          <label for="source-dimension">ขนาด/สภาพการใช้งาน (เช่น "กว้าง 3 ม. ยาว 8 ม. สูง 1.2 ม. — ใช้งานได้ดี")</label>
+          <input type="text" id="source-dimension" placeholder="กว้าง x ยาว x สูง, สภาพการใช้งาน">
+        </div>
 
         <button id="btn-pin-mode" class="secondary">เริ่มปักหมุดบนแผนที่</button>
         <div id="pin-status" class="muted" style="margin-top:0.5rem;">ยังไม่ได้ปักหมุด</div>
@@ -182,8 +203,10 @@
 <script src="https://unpkg.com/shpjs@4.0.4/dist/shp.js"></script>
 <script src="https://unpkg.com/@tmcw/togeojson@5.8.1/dist/togeojson.umd.js"></script>
 <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
+<script src="https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="js/auth.js"></script>
 <script src="js/geo-upload.js"></script>
+<script src="js/tabular-import.js"></script>
 <script src="js/admin-setup.js"></script>
 </body>
 </html>

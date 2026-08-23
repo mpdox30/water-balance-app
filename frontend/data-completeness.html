@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ความครบถ้วนข้อมูล — ระบบสมดุลน้ำชุมชนระดับตำบล</title>
+<link rel="stylesheet" href="css/style.css">
+<style>
+  .dot { display: inline-block; width: 0.85em; height: 0.85em; border-radius: 50%; margin-right: 0.3em; vertical-align: -0.05em; }
+  .dot-green { background: #1a7f37; }
+  .dot-yellow { background: #b8860b; }
+  .dot-red { background: #c0392b; }
+  .cell-status { white-space: nowrap; }
+  .cell-detail { display: block; opacity: 0.65; font-size: 0.85em; margin-top: 0.1em; }
+  .overall-green { background: rgba(26,127,55,0.10); }
+  .overall-yellow { background: rgba(184,134,11,0.10); }
+  .overall-red { background: rgba(192,57,43,0.10); }
+  .summary-bar { display: flex; gap: 1.5rem; flex-wrap: wrap; margin-top: 0.75rem; }
+  .summary-bar > div { padding: 0.75rem 1rem; border-radius: 8px; border: 1px solid rgba(127,127,127,0.3); flex: 1; min-width: 10rem; }
+  .summary-num { font-size: 1.5rem; font-weight: 700; }
+  #completeness-table-wrap { overflow-x: auto; }
+  table.completeness th, table.completeness td { vertical-align: top; }
+  .gate-ready { color: #1a7f37; font-weight: 600; }
+  .gate-blocked { color: #c0392b; font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <strong>ความครบถ้วนข้อมูล</strong>
+  <div>
+    <a href="admin-setup.html" style="margin-right:0.75rem;">ตั้งค่าตำบล</a>
+    <span id="whoami" class="muted"></span>
+    <button class="secondary" onclick="logout()" style="margin-top:0; margin-left:0.75rem;">ออกจากระบบ</button>
+  </div>
+</div>
+
+<div class="page-wide">
+
+  <section class="card">
+    <h2>เลือกตำบล</h2>
+    <label for="sel-tambon-c">ตำบล</label>
+    <select id="sel-tambon-c"><option value="">-- เลือกตำบล --</option></select>
+    <div id="load-status" class="muted" style="margin-top:0.5rem;"></div>
+  </section>
+
+  <section id="result-section" class="card" style="display:none;">
+    <h2 id="result-heading"></h2>
+    <p class="muted">
+      <span class="dot dot-green"></span>เขียว = ครบ &nbsp;
+      <span class="dot dot-yellow"></span>เหลือง = มีบางส่วน &nbsp;
+      <span class="dot dot-red"></span>แดง = ยังไม่มีข้อมูล
+      — ตรวจเฉพาะหมวดที่ "จำเป็น" ต่อการคำนวณสมดุลน้ำ (ปฏิทินเพาะปลูก/ฝาย/บ่อรายจุด เป็นหมวดเสริมคุณภาพ ไม่รวมที่นี่)
+    </p>
+
+    <div class="summary-bar">
+      <div>
+        <div class="muted">หมู่บ้านครบ (เขียวทุกหมวด)</div>
+        <div class="summary-num" id="summary-villages-green">–</div>
+      </div>
+      <div>
+        <div class="muted">อ่างเก็บน้ำ (ระดับตำบล)</div>
+        <div class="summary-num" id="summary-reservoir">–</div>
+        <div class="muted" id="summary-reservoir-detail"></div>
+      </div>
+      <div>
+        <div class="muted">สถานะพร้อมคำนวณสมดุลน้ำ</div>
+        <div class="summary-num" id="summary-gate">–</div>
+      </div>
+    </div>
+
+    <div id="completeness-table-wrap">
+      <table class="completeness">
+        <thead>
+          <tr>
+            <th>หมู่</th>
+            <th>หมู่บ้าน</th>
+            <th>1) ประชากร/ครัวเรือน</th>
+            <th>2) ขอบเขต</th>
+            <th>3-4) แหล่งน้ำ</th>
+            <th>6) พืชที่ปลูก</th>
+            <th>8) ปศุสัตว์</th>
+          </tr>
+        </thead>
+        <tbody id="completeness-tbody"></tbody>
+      </table>
+    </div>
+  </section>
+
+</div>
+
+<script src="js/auth.js"></script>
+<script src="js/data-completeness.js"></script>
+</body>
+</html>

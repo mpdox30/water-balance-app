@@ -46,6 +46,10 @@ from schemas import (
     WaterSourceResponse,
     ReservoirVillageUsageReplaceRequest,
     ReservoirVillageUsageResponse,
+    CategoryCompleteness,
+    DataCompletenessResponse,
+    ReservoirCompleteness,
+    VillageCompleteness,
 )
 from security import (
     check_can_write_village,
@@ -807,4 +811,199 @@ def get_balance(tambon_id: str = Query(...)):
         available_months=months_set,
         villages=villages_out,
         tambon_overview=TambonBalanceOverview(months=overview_months, reservoir_capacity_m3=reservoir_total),
+    )
+
+
+# ============================================================
+# Data completeness dashboard (future-tambon-onboarding-plan.md ขั้นตอนที่ 8)
+# ============================================================
+# ต้องตรงกับ frontend/js/report.js — sentinel ที่ POST ไปที่ /livestock-reports (head_count=0) เพื่อยืนยัน
+# "หมู่บ้านนี้ไม่มีปศุสัตว์เดือนนี้จริงๆ" (ไม่ใช่แค่ยังไม่ได้กรอก) ต้อง filter ออกก่อนนับเป็นชนิดสัตว์จริง
+# แต่นับเป็น "มีข้อมูลครบแล้ว" (green) เหมือนกัน — ห้ามลืม sync ค่านี้ถ้าฝั่ง frontend เปลี่ยน
+NO_LIVESTOCK_SENTINEL = "ไม่มีปศุสัตว์"
+
+
+@router.get("/data-completeness", response_model=DataCompletenessResponse)
+def get_data_completeness(tambon_id: str = Query(...)):
+    """สรุปความครบถ้วนข้อมูลรายหมู่บ้าน+ภาพรวมตำบล ใช้ก่อนตัดสินใจกด "คำนวณสมดุลน้ำ" — เกณฑ์เขียว/เหลือง/แดง
+    เทียบเท่างานที่เคยทำด้วยมือให้แม่นาเรือใน 00_docs/phase5-data-gaps.md อิงตารางข้อ 2 ของ
+    future-tambon-onboarding-plan.md (เฉพาะหมวดที่ "จำเป็น": หมู่บ้าน/ขอบเขต/แหล่งน้ำ/พืช/ปศุสัตว์ —
+    ปฏิทินเพาะปลูก(7), ฝาย(9), บ่อรายจุด(10) เป็นหมวดเสริมคุณภาพ ไม่รวมในเกณฑ์นี้เพราะไม่บล็อกการคำนวณ)"""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("select tambon_id, name_th from tambons where tambon_id = %s", (tambon_id,))
+            tambon_row = cur.fetchone()
+            if not tambon_row:
+                raise HTTPException(status_code=404, detail="tambon not found")
+
+            cur.execute(
+                "select village_id, moo, name_th, population, households "
+                "from villages where tambon_id = %s order by moo",
+                (tambon_id,),
+            )
+            village_rows = cur.fetchall()
+            village_ids = [r["village_id"] for r in village_rows]
+
+            boundary_counts: dict = {}
+            supply_own_counts: dict = {}
+            supply_usage_village_ids: set = set()
+            crop_counts: dict = {}
+            livestock_species_by_village: dict = {}
+
+            if village_ids:
+                cur.execute(
+                    "select village_id, count(*) as n from village_boundary_parts "
+                    "where village_id = any(%s) group by village_id",
+                    (village_ids,),
+                )
+                boundary_counts = {str(r["village_id"]): r["n"] for r in cur.fetchall()}
+
+                cur.execute(
+                    "select village_id, count(*) as n from water_storage_sources "
+                    "where village_id = any(%s) group by village_id",
+                    (village_ids,),
+                )
+                supply_own_counts = {str(r["village_id"]): r["n"] for r in cur.fetchall()}
+
+                cur.execute(
+                    "select distinct rvu.village_id from reservoir_village_usage rvu "
+                    "where rvu.village_id = any(%s)",
+                    (village_ids,),
+                )
+                supply_usage_village_ids = {str(r["village_id"]) for r in cur.fetchall()}
+
+                cur.execute(
+                    "select village_id, count(*) as n from crop_report "
+                    "where village_id = any(%s) group by village_id",
+                    (village_ids,),
+                )
+                crop_counts = {str(r["village_id"]): r["n"] for r in cur.fetchall()}
+
+                cur.execute(
+                    "select village_id, species, count(*) as n from livestock_report "
+                    "where village_id = any(%s) group by village_id, species",
+                    (village_ids,),
+                )
+                for r in cur.fetchall():
+                    livestock_species_by_village.setdefault(str(r["village_id"]), []).append(
+                        {"species": r["species"], "n": r["n"]}
+                    )
+
+            # อ่างเก็บน้ำระดับตำบล (ไม่ผูกหมู่บ้านใดหมู่บ้านหนึ่ง) — ดูภาพรวม
+            cur.execute(
+                "select source_id from water_storage_sources where tambon_id = %s and source_type = 'reservoir'",
+                (tambon_id,),
+            )
+            reservoir_ids = [r["source_id"] for r in cur.fetchall()]
+            reservoirs_with_usage = 0
+            if reservoir_ids:
+                cur.execute(
+                    "select count(distinct source_id) as n from reservoir_village_usage where source_id = any(%s)",
+                    (reservoir_ids,),
+                )
+                reservoirs_with_usage = cur.fetchone()["n"]
+
+    if not reservoir_ids:
+        reservoir_status = "yellow"
+        reservoir_detail = "ตำบลนี้ยังไม่มีอ่างเก็บน้ำในระบบ — ถ้าจริงไม่มีอ่างเลยไม่ต้องกรอก (ไม่บล็อกการคำนวณ)"
+    elif reservoirs_with_usage < len(reservoir_ids):
+        reservoir_status = "yellow"
+        reservoir_detail = (
+            f"มีอ่าง {len(reservoir_ids)} แห่ง แต่ยังไม่ได้กรอกตารางการใช้น้ำแยกหมู่บ้าน "
+            f"{len(reservoir_ids) - reservoirs_with_usage} แห่ง (ขั้นตอนที่ 4)"
+        )
+    else:
+        reservoir_status = "green"
+        reservoir_detail = f"อ่างทั้ง {len(reservoir_ids)} แห่งกรอกตารางการใช้น้ำแยกหมู่บ้านครบแล้ว"
+
+    villages_out: list[VillageCompleteness] = []
+    for v in village_rows:
+        vid = str(v["village_id"])
+
+        has_pop = v["population"] is not None
+        has_hh = v["households"] is not None
+        if has_pop and has_hh:
+            village_info = CategoryCompleteness(status="green", detail="มีข้อมูลประชากร+ครัวเรือนแล้ว")
+        elif has_pop or has_hh:
+            village_info = CategoryCompleteness(status="yellow", detail="มีข้อมูลบางส่วน (ประชากรหรือครัวเรือน)")
+        else:
+            village_info = CategoryCompleteness(status="red", detail="ยังไม่มีข้อมูลประชากร/ครัวเรือน")
+
+        boundary_n = boundary_counts.get(vid, 0)
+        boundary = (
+            CategoryCompleteness(status="green", detail=f"วาดขอบเขตแล้ว {boundary_n} ส่วน")
+            if boundary_n > 0
+            else CategoryCompleteness(status="red", detail="ยังไม่ได้วาดขอบเขตหมู่บ้าน")
+        )
+
+        has_own_supply = supply_own_counts.get(vid, 0) > 0
+        has_reservoir_usage = vid in supply_usage_village_ids
+        if has_own_supply and has_reservoir_usage:
+            water_supply = CategoryCompleteness(status="green", detail="มีแหล่งน้ำของหมู่บ้านเอง + ใช้อ่างตำบลด้วย")
+        elif has_own_supply or has_reservoir_usage:
+            water_supply = CategoryCompleteness(
+                status="green" if has_own_supply else "yellow",
+                detail=(
+                    f"มีแหล่งน้ำของหมู่บ้านเอง {supply_own_counts.get(vid, 0)} แห่ง"
+                    if has_own_supply
+                    else "ใช้อ่างเก็บน้ำระดับตำบล (ยังไม่มีแหล่งน้ำของหมู่บ้านเอง)"
+                ),
+            )
+        else:
+            water_supply = CategoryCompleteness(status="red", detail="ยังไม่มีแหล่งน้ำ (สระ/บ่อ/อ่าง) เลย")
+
+        crop_n = crop_counts.get(vid, 0)
+        crop = (
+            CategoryCompleteness(status="green", detail=f"มีรายงานพืช {crop_n} รายการ (สะสมทุกเดือน)")
+            if crop_n > 0
+            else CategoryCompleteness(status="red", detail="ยังไม่มีรายงานพืชเลยแม้แต่เดือนเดียว")
+        )
+
+        species_rows = livestock_species_by_village.get(vid, [])
+        has_confirmed_none = any(r["species"] == NO_LIVESTOCK_SENTINEL for r in species_rows)
+        real_species_count = sum(r["n"] for r in species_rows if r["species"] != NO_LIVESTOCK_SENTINEL)
+        if real_species_count > 0:
+            livestock = CategoryCompleteness(status="green", detail=f"มีรายงานปศุสัตว์ {real_species_count} รายการ")
+        elif has_confirmed_none:
+            livestock = CategoryCompleteness(status="green", detail="ยืนยันแล้วว่าหมู่บ้านนี้ไม่มีปศุสัตว์")
+        else:
+            livestock = CategoryCompleteness(status="red", detail="ยังไม่ได้กรอก/ยืนยันข้อมูลปศุสัตว์เลย")
+
+        cat_statuses = [village_info.status, boundary.status, water_supply.status, crop.status, livestock.status]
+        if all(s == "green" for s in cat_statuses):
+            overall = "green"
+        elif any(s == "red" for s in cat_statuses):
+            overall = "red"
+        else:
+            overall = "yellow"
+
+        villages_out.append(
+            VillageCompleteness(
+                village_id=vid,
+                moo=v["moo"],
+                name_th=v["name_th"],
+                village_info=village_info,
+                boundary=boundary,
+                water_supply=water_supply,
+                crop=crop,
+                livestock=livestock,
+                overall_status=overall,
+            )
+        )
+
+    villages_green = sum(1 for v in villages_out if v.overall_status == "green")
+
+    return DataCompletenessResponse(
+        tambon_id=str(tambon_row["tambon_id"]),
+        tambon_name=tambon_row["name_th"],
+        reservoir=ReservoirCompleteness(
+            total_reservoirs=len(reservoir_ids),
+            reservoirs_with_usage=reservoirs_with_usage,
+            status=reservoir_status,
+            detail=reservoir_detail,
+        ),
+        villages=villages_out,
+        total_villages=len(villages_out),
+        villages_green=villages_green,
+        can_compute_balance=len(villages_out) > 0 and villages_green == len(villages_out),
     )

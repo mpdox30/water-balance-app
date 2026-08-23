@@ -183,10 +183,14 @@ def run_for_tambon(conn, tambon: dict, year: int, month: int) -> None:
 
     climate = db.fetch_climate(conn, tambon_id, month_date)
     if climate is None or climate["et0_mm"] is None:
-        print(f"  [ข้าม] {tambon['name_th']}: ยังไม่มี et0_mm ของเดือน {month_date} "
-              f"(ต้องรัน pipeline/run_monthly.py ก่อน) — ไม่ fabricate ค่าขึ้นเอง")
+        print(f"  [ข้าม] {tambon['name_th']}: ยังไม่มี et0_mm ของเดือน {month_date} เลย "
+              f"(ต้องรัน pipeline/run_monthly.py ก่อน และไม่มีข้อมูลปีก่อนหน้าให้ประมาณการ) — ไม่ fabricate ค่าขึ้นเอง")
         return
     et0_mm = float(climate["et0_mm"])
+    if climate.get("et0_estimated"):
+        print(f"  [ประมาณการ] {tambon['name_th']}: ยังไม่มี et0_mm จริงของเดือน {month_date} — ใช้ค่าเฉลี่ย "
+              f"et0_mm ของเดือนปฏิทินเดียวกันจากปีก่อนหน้า = {et0_mm:.1f} มม. แทนชั่วคราว "
+              f"(จะคำนวณซ้ำอัตโนมัติด้วยค่าจริงเมื่อ pipeline/run_monthly.py รันของเดือนนี้สำเร็จ)")
 
     kc_reference = db.fetch_kc_reference(conn)  # {group_name: dict_row}
     kc_this_month = {}

@@ -304,6 +304,48 @@ function addCropRow(prefillName, prefillArea) {
   document.getElementById("crop-rows").appendChild(div);
 }
 document.getElementById("btn-add-crop-row").addEventListener("click", () => addCropRow());
+
+// ---------- นำเข้ารายชื่อพืช+พื้นที่ปลูกจาก Excel/CSV (เติมเป็นแถวให้ตรวจสอบก่อน ยังไม่ยิง POST ทันที) ----------
+const CROP_BULK_COL_ALIASES = {
+  crop_name: ["ชื่อพืช", "พืช", "crop_name", "crop"],
+  planted_area_rai: ["พื้นที่ปลูก", "พื้นที่", "ไร่", "planted_area_rai", "area"],
+};
+
+document.getElementById("crop-bulk-file").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const statusEl = document.getElementById("crop-bulk-status");
+  statusEl.textContent = "กำลังอ่านไฟล์...";
+  try {
+    const rows = await parseTabularFile(file);
+    const parsed = rows
+      .map((r) => ({
+        crop_name: (getCell(r, CROP_BULK_COL_ALIASES.crop_name) || "").toString().trim(),
+        planted_area_rai: getCellNumber(r, CROP_BULK_COL_ALIASES.planted_area_rai),
+      }))
+      .filter((r) => r.crop_name && r.planted_area_rai != null);
+    if (!parsed.length) {
+      statusEl.textContent = "ไม่พบแถวที่มีทั้งชื่อพืชและพื้นที่ปลูกในไฟล์นี้ — ตรวจชื่อคอลัมน์อีกครั้ง";
+      return;
+    }
+    // ถ้ามีแค่ 1 แถวว่างเปล่าอยู่ก่อน (สถานะเริ่มต้นของฟอร์ม) ให้ลบทิ้งก่อนเติมจากไฟล์ กันแถวว่างค้าง
+    const existingRows = document.querySelectorAll("#crop-rows .row-group");
+    if (existingRows.length === 1) {
+      const nameVal = existingRows[0].querySelector(".crop-name-input").value.trim();
+      const areaVal = existingRows[0].querySelector(".crop-area-input").value;
+      if (!nameVal && !areaVal) existingRows[0].remove();
+    }
+    parsed.forEach((r) => addCropRow(r.crop_name, r.planted_area_rai));
+    const skipped = rows.length - parsed.length;
+    statusEl.innerHTML =
+      '<span class="ok">เติม ' + parsed.length + " แถวจากไฟล์แล้ว</span>" +
+      (skipped > 0 ? " (ข้าม " + skipped + " แถวที่ไม่มีชื่อพืชหรือพื้นที่) " : " ") +
+      "— ตรวจสอบ/แก้ไขด้านบนก่อนกด \"บันทึกรายงานพืช\"";
+    document.getElementById("crop-bulk-file").value = "";
+  } catch (err) {
+    statusEl.textContent = err.message;
+  }
+});
 addCropRow(); // เริ่มด้วย 1 แถวว่างให้กรอกทันที
 
 document.getElementById("btn-submit-crops").addEventListener("click", async () => {

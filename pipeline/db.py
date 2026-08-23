@@ -110,9 +110,16 @@ def upsert_rice_paddy_monthly(conn, village_id: str, month: str, paddy_area_rai:
 # =============================================================================
 
 def fetch_climate(conn, tambon_id: str, month: str) -> dict | None:
-    """คืน {'rainfall_mm':..., 'et0_mm':...} ของตำบล/เดือนนั้น หรือ None ถ้ายังไม่มี et0_mm
-    (rainfall_mm อาจ NULL ได้โดยไม่ block การคำนวณ agri เพราะไม่ได้ใช้หัก effective rainfall ในเวอร์ชันนี้
-    — ดู balance_engine.py ข้อจำกัดข้อ 4)"""
+    """คืน {'rainfall_mm':..., 'et0_mm':..., 'et0_estimated': bool} ของตำบล/เดือนนั้น หรือ None ถ้าไม่มีทาง
+    หาค่า et0_mm ได้เลย (rainfall_mm อาจ NULL ได้โดยไม่ block การคำนวณ agri เพราะไม่ได้ใช้หัก effective
+    rainfall ในเวอร์ชันนี้ — ดู balance_engine.py ข้อจำกัดข้อ 4)
+
+    ถ้ายังไม่มี et0_mm จริงของเดือนนี้ (เดือนปัจจุบันที่ CHIRPS/MOD16A2 ยังไม่ปิด composite เดือน หรือเดือน
+    เก่าที่ยังไม่ backfill) จะ fallback ไปใช้ค่าเฉลี่ยของ "เดือนปฏิทินเดียวกัน" จากปีก่อนหน้าที่มีข้อมูลจริง
+    แทนชั่วคราว (climatological average) — ดู 00_docs/future-tambon-onboarding-plan.md ข้อ 7 ส่วนเสริม
+    2026-08-22 สำหรับเหตุผลที่เลือกวิธีนี้แทน "เอาเดือนก่อนหน้ามาใช้" — ผลลัพธ์ที่ fallback มี
+    et0_estimated=True กำกับไว้เสมอ เพื่อให้ผู้เรียกใช้ (เช่น balance_engine.py) log/แจ้งเตือนได้ว่าเป็น
+    ค่าประมาณการ ไม่ใช่ค่าจริงจากดาวเทียม"""
     with conn.cursor() as cur:
         cur.execute(
             "select r.rainfall_mm, e.et0_mm from et0_monthly e "
@@ -120,7 +127,28 @@ def fetch_climate(conn, tambon_id: str, month: str) -> dict | None:
             "where e.tambon_id = %s and e.month = %s",
             (tambon_id, month),
         )
-        return cur.fetchone()
+        row = cur.fetchone()
+    if row and row["et0_mm"] is not None:
+        return {"rainfall_mm": row["rainfall_mm"], "et0_mm": row["et0_mm"], "et0_estimated": False}
+    return fetch_climatological_et0_fallback(conn, tambon_id, month)
+
+
+def fetch_climatological_et0_fallback(conn, tambon_id: str, month: str) -> dict | None:
+    """ค่าเฉลี่ย et0_mm ของ "เดือนปฏิทินเดียวกัน" (เช่น ก.ค. ทุกปี) จากทุกปีก่อนหน้าของตำบลนี้ที่มี et0_mm
+    จริงแล้ว (ไม่รวมเดือนเป้าหมายเอง — เผื่อกรณีมีค่า partial/ผิดพลาดติดอยู่) คืน None ถ้าไม่มีข้อมูลปีก่อน
+    เลยแม้แต่ปีเดียว (ตำบลใหม่ปีแรกยังไม่มีอะไรให้เฉลี่ย — ต้องรอข้อมูลจริงต่อไป ไม่ fabricate ค่าขึ้นมาลอยๆ)"""
+    with conn.cursor() as cur:
+        cur.execute(
+            "select avg(et0_mm) as avg_et0, count(*) as n from et0_monthly "
+            "where tambon_id = %s and month <> %s "
+            "and extract(month from month) = extract(month from %s::date) "
+            "and et0_mm is not null",
+            (tambon_id, month, month),
+        )
+        row = cur.fetchone()
+    if not row or not row["n"] or row["avg_et0"] is None:
+        return None
+    return {"rainfall_mm": None, "et0_mm": float(row["avg_et0"]), "et0_estimated": True}
 
 
 def fetch_kc_reference(conn) -> dict:
