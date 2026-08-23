@@ -251,6 +251,22 @@ _VILLAGE_COLS = (
     "residential_rai, agri_rai, forest_rai, other_rai, total_rai, data_year_be"
 )
 
+# ใช้เฉพาะตอนอ่าน (list_villages/get_village) — ต่างจาก _VILLAGE_COLS เดิมตรงที่ join เพิ่ม
+# "พื้นที่ปลูกของเดือนล่าสุดที่มีรายงานจริง" มาด้วย (เพิ่ม 2569-08 ดูเหตุผลที่คอมเมนต์ VillageResponse ใน
+# schemas.py) — ไม่เอาไปรวมกับ _VILLAGE_COLS เดิมเพราะตัวนั้นถูกใช้ซ้ำใน "returning {_VILLAGE_COLS}" ของ
+# insert/update ด้วย ซึ่งไม่มี alias "v." ให้ join แบบนี้ได้
+_VILLAGE_SELECT_WITH_LATEST_CROP = (
+    "select v.village_id, v.tambon_id, v.moo, v.name_th, v.name_source, v.households, v.population, "
+    "v.residential_rai, v.agri_rai, v.forest_rai, v.other_rai, v.total_rai, v.data_year_be, "
+    "lc.latest_area_rai as latest_crop_area_rai, lc.latest_month as latest_crop_report_month "
+    "from villages v "
+    "left join lateral ("
+    "  select reported_month as latest_month, sum(planted_area_rai) as latest_area_rai "
+    "  from crop_report cr where cr.village_id = v.village_id "
+    "  group by reported_month order by reported_month desc limit 1"
+    ") lc on true"
+)
+
 
 def _row_to_village(row) -> VillageResponse:
     def _f(v):
@@ -270,17 +286,19 @@ def _row_to_village(row) -> VillageResponse:
         other_rai=_f(row["other_rai"]),
         total_rai=_f(row["total_rai"]),
         data_year_be=row["data_year_be"],
+        latest_crop_area_rai=_f(row.get("latest_crop_area_rai")),
+        latest_crop_report_month=row.get("latest_crop_report_month"),
     )
 
 
 @router.get("/villages", response_model=list[VillageResponse])
 def list_villages(tambon_id: str | None = Query(default=None)):
-    sql = f"select {_VILLAGE_COLS} from villages"
+    sql = _VILLAGE_SELECT_WITH_LATEST_CROP
     params: list = []
     if tambon_id:
-        sql += " where tambon_id = %s"
+        sql += " where v.tambon_id = %s"
         params.append(tambon_id)
-    sql += " order by moo"
+    sql += " order by v.moo"
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(sql, params)
@@ -292,7 +310,7 @@ def list_villages(tambon_id: str | None = Query(default=None)):
 def get_village(village_id: str):
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute(f"select {_VILLAGE_COLS} from villages where village_id = %s", (village_id,))
+            cur.execute(_VILLAGE_SELECT_WITH_LATEST_CROP + " where v.village_id = %s", (village_id,))
             row = cur.fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="village not found")
@@ -387,6 +405,18 @@ def create_village_boundary_part(body: VillageBoundaryPartCreateRequest, _admin:
             except psycopg.errors.ForeignKeyViolation:
                 raise HTTPException(status_code=404, detail="village_id ไม่พบ")
             row = cur.fetchone()
+            # sync villages.total_rai จากผลรวมขอบเขตที่วาดไว้ — แต่ "เติมเฉพาะตอนที่ยังว่าง" (total_rai is
+            # null) เท่านั้น ไม่ overwrite ค่าที่มีอยู่แล้ว เพิ่ม 2569-08 หลังพบว่าบางตำบล (เช่นแม่นาเรือ) มี
+            # total_rai ที่กรอกไว้จากแหล่งอื่นที่แม่นกว่าเส้นที่วาดมือบน Leaflet (เทียบแล้วต่างกันถึง ~54% ใน
+            # บางหมู่บ้าน เช่น เส้นที่วาดยังไม่ครอบคลุมเต็มพื้นที่จริง) — เป้าหมายของ sync นี้คือเติมข้อมูลที่
+            # ยังไม่เคยมีเลย (เช่นตำบลที่ total_rai เป็น NULL ทั้งตำบล) ไม่ใช่แทนที่ค่าที่มีอยู่แล้วด้วยเส้นมือ
+            cur.execute(
+                "update villages set total_rai = ("
+                "  select coalesce(sum(ST_Area(geom::geography) / 1600.0), 0) "
+                "  from village_boundary_parts where village_id = %s"
+                ") where village_id = %s and total_rai is null",
+                (body.village_id, body.village_id),
+            )
         conn.commit()
     return _row_to_boundary_part(row)
 

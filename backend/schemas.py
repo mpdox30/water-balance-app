@@ -112,6 +112,14 @@ class VillageResponse(BaseModel):
     other_rai: Optional[float] = None
     total_rai: Optional[float] = None
     data_year_be: Optional[int] = None
+    # เพิ่ม 2569-08 — agri_rai (พื้นที่เกษตร baseline จากฟอร์มสำรวจหมู่บ้าน) แทบไม่มีใครกรอกในทางปฏิบัติ
+    # จริง (ต่างจากรายงานพืชรายเดือนที่ชาวบ้านกรอกผ่าน report.html เป็นประจำ) ตั้งใจไม่แตะ agri_rai/total_rai
+    # เดิม เพราะ agri_rai ยังใช้เป็นเพดานบล็อกการส่งรายงานพืชเกิน (ดู report.js) — ถ้า sync อัตโนมัติจาก
+    # ยอดรายงานเดือนล่าสุดจะกลายเป็นบล็อกเดือนถัดไปที่พื้นที่ปลูกเพิ่มขึ้นแทน จึงเพิ่มฟิลด์ใหม่แยกต่างหาก
+    # สำหรับหน้าแดชบอร์ดใช้แสดง "พื้นที่เกษตรรวม" แทน โดยดึงจาก crop_report ของเดือนล่าสุดที่มีรายงานจริง
+    # (ดู list_villages/get_village ใน routes.py — LEFT JOIN LATERAL หา reported_month ล่าสุดต่อหมู่บ้าน)
+    latest_crop_area_rai: Optional[float] = None
+    latest_crop_report_month: Optional[date] = None
 
 
 class VillageUpdateRequest(BaseModel):

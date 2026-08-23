@@ -404,8 +404,15 @@ function renderAreaInfo() {
   const t = state.currentTambon;
   const totalPop = state.villages.reduce((s, v) => s + (v.population || 0), 0);
   const totalHh = state.villages.reduce((s, v) => s + (v.households || 0), 0);
-  const totalAgriRai = state.villages.reduce((s, v) => s + (v.agri_rai || 0), 0);
+  // พื้นที่เกษตรรวม: ดึงจากยอดรายงานพืชของเดือนล่าสุดที่แต่ละหมู่บ้านมีจริง (latest_crop_area_rai จาก
+  // GET /villages) ไม่ใช่ villages.agri_rai แบบเดิม — agri_rai เป็นฟิลด์ baseline คงที่ที่แทบไม่มีใครกรอก
+  // (ยังใช้เป็นเพดานบล็อกรายงานเกินใน report.js อยู่ ตั้งใจไม่แตะ) เดือนล่าสุดของแต่ละหมู่บ้านอาจไม่ตรงกัน
+  // ถ้าบางหมู่บ้านรายงานเดือนนี้ บางหมู่บ้านยังค้างเดือนก่อน — ดู agriRaiTip ด้านล่าง
+  const totalAgriRai = state.villages.reduce((s, v) => s + (v.latest_crop_area_rai || 0), 0);
   const totalRai = state.villages.reduce((s, v) => s + (v.total_rai || 0), 0);
+  const villagesWithNoCropYet = state.villages.filter(v => !v.latest_crop_report_month).length;
+  const agriRaiTip = `รวมยอดพื้นที่ปลูกของเดือนล่าสุดที่แต่ละหมู่บ้านมีรายงานจริง (คนละเดือนกันได้ถ้าหมู่บ้านรายงานไม่พร้อมกัน)` +
+    (villagesWithNoCropYet ? ` — ${villagesWithNoCropYet}/${state.villages.length} หมู่บ้านยังไม่เคยส่งรายงานพืชเลย` : "");
 
   const bySourceType = {};
   state.waterSources.forEach(s => {
@@ -430,7 +437,7 @@ function renderAreaInfo() {
     <h3 class="sub-title">ประชากรและพื้นที่ใช้ประโยชน์</h3>
     <div class="stat-row"><span class="k">ประชากรรวม</span><span class="v">${fmt(totalPop)} คน</span></div>
     <div class="stat-row"><span class="k">ครัวเรือนรวม</span><span class="v">${fmt(totalHh)} หลัง</span></div>
-    <div class="stat-row"><span class="k">พื้นที่เกษตรรวม</span><span class="v">${fmt(totalAgriRai)} ไร่</span></div>
+    <div class="stat-row"><span class="k">พื้นที่เกษตรรวม<span class="info-i" title="${agriRaiTip}">i</span></span><span class="v">${fmt(totalAgriRai)} ไร่</span></div>
     <div class="stat-row"><span class="k">พื้นที่สำรวจรวม</span><span class="v">${fmt(totalRai)} ไร่</span></div>
 
     <h3 class="sub-title">แหล่งน้ำสำคัญ</h3>
