@@ -37,6 +37,7 @@ from schemas import (
     VillageBoundaryPartResponse,
     VillageCreateRequest,
     VillageResponse,
+    VillageUpdateRequest,
     WaterSourceCreateRequest,
     WaterSourceResponse,
 )
@@ -313,6 +314,28 @@ def create_village(body: VillageCreateRequest, _admin: dict = Depends(require_ad
             )
             row = cur.fetchone()
         conn.commit()
+    return _row_to_village(row)
+
+
+@router.patch("/villages/{village_id}", response_model=VillageResponse)
+def update_village(village_id: str, body: VillageUpdateRequest, _admin: dict = Depends(require_admin)):
+    """แก้ไขข้อมูลหมู่บ้านบางส่วน (partial update) — ใช้เติมประชากร/ครัวเรือน/พื้นที่ใช้ที่ดิน
+    ให้หมู่บ้านที่สร้างไว้ก่อนหน้านี้ได้ โดยไม่ต้องลบสร้างใหม่ (ซึ่งจะทำให้เสียขอบเขตที่วาดไว้แล้ว)"""
+    fields = body.model_dump(exclude_unset=True)
+    if not fields:
+        raise HTTPException(status_code=400, detail="ไม่มีฟิลด์ที่จะแก้ไข")
+    set_clauses = [f"{col} = %s" for col in fields]
+    params = list(fields.values()) + [village_id]
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"update villages set {', '.join(set_clauses)} where village_id = %s returning {_VILLAGE_COLS}",
+                params,
+            )
+            row = cur.fetchone()
+        conn.commit()
+    if not row:
+        raise HTTPException(status_code=404, detail="village not found")
     return _row_to_village(row)
 
 

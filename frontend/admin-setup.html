@@ -63,11 +63,34 @@
         <input type="number" id="village-moo" min="1" step="1">
         <label for="village-name">ชื่อหมู่บ้าน</label>
         <input type="text" id="village-name" placeholder="เช่น บ้านสันติสุข">
+
+        <label for="village-population">ประชากร (คน) <span class="muted">— ไม่บังคับ แต่แนะนำให้กรอก ใช้คำนวณน้ำบริโภค/อุปโภครายเดือน</span></label>
+        <input type="number" id="village-population" min="0" step="1">
+        <label for="village-households">ครัวเรือน <span class="muted">(ไม่บังคับ)</span></label>
+        <input type="number" id="village-households" min="0" step="1">
+
+        <details style="margin: 0.5rem 0;">
+          <summary style="cursor:pointer;">ข้อมูลพื้นที่ใช้ที่ดิน (ไม่บังคับ — กรอกทีหลังก็ได้)</summary>
+          <div style="margin-top:0.5rem;">
+            <label for="village-residential-rai">พื้นที่อยู่อาศัย (ไร่)</label>
+            <input type="number" id="village-residential-rai" min="0" step="0.1">
+            <label for="village-agri-rai">พื้นที่เกษตร (ไร่)</label>
+            <input type="number" id="village-agri-rai" min="0" step="0.1">
+            <label for="village-forest-rai">พื้นที่ป่า (ไร่)</label>
+            <input type="number" id="village-forest-rai" min="0" step="0.1">
+            <label for="village-other-rai">พื้นที่อื่นๆ (ไร่)</label>
+            <input type="number" id="village-other-rai" min="0" step="0.1">
+            <label for="village-data-year-be">ข้อมูลของปี พ.ศ.</label>
+            <input type="number" id="village-data-year-be" min="2500" step="1" placeholder="เช่น 2568">
+          </div>
+        </details>
+
         <button id="btn-add-village">เพิ่มหมู่บ้าน</button>
+        <button id="btn-cancel-edit-village" class="secondary" style="display:none;">ยกเลิกแก้ไข</button>
         <div id="village-add-status" class="muted" style="margin-top:0.5rem;"></div>
 
         <table id="village-table" style="display:none;">
-          <thead><tr><th>หมู่</th><th>ชื่อ</th><th>ขอบเขตที่วาด (ไร่)</th><th></th></tr></thead>
+          <thead><tr><th>หมู่</th><th>ชื่อ</th><th>ประชากร</th><th>ครัวเรือน</th><th>ขอบเขตที่วาด (ไร่)</th><th></th></tr></thead>
           <tbody></tbody>
         </table>
 

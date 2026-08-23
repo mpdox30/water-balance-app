@@ -114,6 +114,22 @@ class VillageResponse(BaseModel):
     data_year_be: Optional[int] = None
 
 
+class VillageUpdateRequest(BaseModel):
+    """แก้ไขข้อมูลหมู่บ้านที่มีอยู่แล้วบางส่วน (partial update) — ส่งเฉพาะฟิลด์ที่ต้องการแก้มาเท่านั้น
+    ใช้เติมข้อมูลประชากร/ครัวเรือน/พื้นที่ใช้ที่ดินย้อนหลังให้หมู่บ้านที่สร้างไว้ก่อนมีฟอร์มนี้ได้ด้วย"""
+    moo: Optional[int] = None
+    name_th: Optional[str] = None
+    name_source: Optional[str] = None
+    households: Optional[int] = None
+    population: Optional[int] = None
+    residential_rai: Optional[float] = None
+    agri_rai: Optional[float] = None
+    forest_rai: Optional[float] = None
+    other_rai: Optional[float] = None
+    total_rai: Optional[float] = None
+    data_year_be: Optional[int] = None
+
+
 # ---------- Village boundary parts (Phase 3 — วาดขอบเขตบน Leaflet เท่านั้น ไม่พิมพ์พิกัดเอง) ----------
 
 class VillageBoundaryPartCreateRequest(BaseModel):

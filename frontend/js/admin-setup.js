@@ -13,7 +13,8 @@ let lookupTree = {}; // { [province_th]: { [amphoe_th]: [ {tambon_th, area_km2, 
 let currentTambonId = null;
 let currentTambonBoundaryGeojson = null;
 let pendingLookupResult = null; // ผลจาก POST /admin/thai-tambon-lookup ก่อนกดยืนยัน
-let villages = []; // [{village_id, moo, name_th, area_rai}]
+let villages = []; // [{village_id, moo, name_th, area_rai, population, households, residential_rai, agri_rai, forest_rai, other_rai, data_year_be}]
+let editingVillageId = null; // village_id ที่กำลังแก้ไขอยู่ (null = โหมดเพิ่มใหม่)
 let activeDrawVillageId = null;
 let pinMode = false;
 let pendingMarker = null;
@@ -327,17 +328,24 @@ function renderVillageTable() {
     const tr = document.createElement("tr");
     tr.innerHTML =
       "<td>" + v.moo + "</td><td>" + v.name_th + "</td>" +
+      "<td>" + (v.population != null ? v.population : "-") + "</td>" +
+      "<td>" + (v.households != null ? v.households : "-") + "</td>" +
       "<td>" + (v.area_rai ? v.area_rai.toFixed(1) : "ยังไม่ได้วาด") + "</td>" +
       '<td class="village-row-actions"></td>';
-    const btn = document.createElement("button");
-    btn.textContent = "วาดขอบเขต";
-    btn.className = "secondary";
-    btn.addEventListener("click", () => {
+    const btnDraw = document.createElement("button");
+    btnDraw.textContent = "วาดขอบเขต";
+    btnDraw.className = "secondary";
+    btnDraw.addEventListener("click", () => {
       activeDrawVillageId = v.village_id;
       document.getElementById("draw-target-name").textContent = "หมู่ " + v.moo + " " + v.name_th;
       document.getElementById("draw-hint").style.display = "";
     });
-    tr.querySelector(".village-row-actions").appendChild(btn);
+    const btnEdit = document.createElement("button");
+    btnEdit.textContent = "แก้ไขข้อมูล";
+    btnEdit.className = "secondary";
+    btnEdit.addEventListener("click", () => startEditVillage(v));
+    tr.querySelector(".village-row-actions").appendChild(btnDraw);
+    tr.querySelector(".village-row-actions").appendChild(btnEdit);
     tbody.appendChild(tr);
   });
   // sync ตัวเลือกหมู่บ้านในฟอร์มแหล่งน้ำ (step 3) ด้วย
@@ -351,6 +359,64 @@ function renderVillageTable() {
   });
 }
 
+/** อ่านฟิลด์ประชากร/ครัวเรือน/พื้นที่ใช้ที่ดินจากฟอร์ม (ทุกฟิลด์ไม่บังคับ — เว้นว่าง = ไม่ส่งค่า/null) */
+function readVillageOptionalFields() {
+  const num = (id, isFloat) => {
+    const raw = document.getElementById(id).value;
+    if (raw === "") return null;
+    return isFloat ? parseFloat(raw) : parseInt(raw, 10);
+  };
+  return {
+    population: num("village-population", false),
+    households: num("village-households", false),
+    residential_rai: num("village-residential-rai", true),
+    agri_rai: num("village-agri-rai", true),
+    forest_rai: num("village-forest-rai", true),
+    other_rai: num("village-other-rai", true),
+    data_year_be: num("village-data-year-be", false),
+  };
+}
+
+function clearVillageForm() {
+  document.getElementById("village-moo").value = "";
+  document.getElementById("village-name").value = "";
+  document.getElementById("village-population").value = "";
+  document.getElementById("village-households").value = "";
+  document.getElementById("village-residential-rai").value = "";
+  document.getElementById("village-agri-rai").value = "";
+  document.getElementById("village-forest-rai").value = "";
+  document.getElementById("village-other-rai").value = "";
+  document.getElementById("village-data-year-be").value = "";
+}
+
+/** เริ่มโหมดแก้ไขหมู่บ้านที่มีอยู่แล้ว — เติมค่าเดิมลงฟอร์มเดียวกับฟอร์มเพิ่มหมู่บ้าน แล้วสลับปุ่มเป็น "บันทึกการแก้ไข" */
+function startEditVillage(v) {
+  editingVillageId = v.village_id;
+  document.getElementById("village-moo").value = v.moo;
+  document.getElementById("village-name").value = v.name_th;
+  document.getElementById("village-population").value = v.population != null ? v.population : "";
+  document.getElementById("village-households").value = v.households != null ? v.households : "";
+  document.getElementById("village-residential-rai").value = v.residential_rai != null ? v.residential_rai : "";
+  document.getElementById("village-agri-rai").value = v.agri_rai != null ? v.agri_rai : "";
+  document.getElementById("village-forest-rai").value = v.forest_rai != null ? v.forest_rai : "";
+  document.getElementById("village-other-rai").value = v.other_rai != null ? v.other_rai : "";
+  document.getElementById("village-data-year-be").value = v.data_year_be != null ? v.data_year_be : "";
+  document.getElementById("btn-add-village").textContent = "บันทึกการแก้ไข";
+  document.getElementById("btn-cancel-edit-village").style.display = "";
+  document.getElementById("village-add-status").innerHTML =
+    'กำลังแก้ไข "หมู่ ' + v.moo + " " + v.name_th + '" — แก้ค่าที่ต้องการแล้วกด "บันทึกการแก้ไข"';
+}
+
+function endEditVillage() {
+  editingVillageId = null;
+  clearVillageForm();
+  document.getElementById("btn-add-village").textContent = "เพิ่มหมู่บ้าน";
+  document.getElementById("btn-cancel-edit-village").style.display = "none";
+  document.getElementById("village-add-status").textContent = "";
+}
+
+document.getElementById("btn-cancel-edit-village").addEventListener("click", endEditVillage);
+
 document.getElementById("btn-add-village").addEventListener("click", async () => {
   const moo = parseInt(document.getElementById("village-moo").value, 10);
   const name_th = document.getElementById("village-name").value.trim();
@@ -359,18 +425,45 @@ document.getElementById("btn-add-village").addEventListener("click", async () =>
     statusEl.textContent = "กรอกหมู่ที่และชื่อหมู่บ้านให้ครบ";
     return;
   }
+  const optionalFields = readVillageOptionalFields();
+
+  if (editingVillageId) {
+    statusEl.textContent = "กำลังบันทึกการแก้ไข...";
+    try {
+      const res = await authFetch("/villages/" + editingVillageId, {
+        method: "PATCH",
+        body: JSON.stringify({ moo, name_th, ...optionalFields }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.detail || "แก้ไขหมู่บ้านไม่สำเร็จ");
+      const v = villages.find((x) => x.village_id === editingVillageId);
+      Object.assign(v, body);
+      renderVillageTable();
+      statusEl.innerHTML = '<span class="ok">บันทึกการแก้ไข "' + body.name_th + '" แล้ว</span>';
+      endEditVillage();
+    } catch (err) {
+      statusEl.textContent = "แก้ไขหมู่บ้านไม่สำเร็จ: " + err.message;
+    }
+    return;
+  }
+
   statusEl.textContent = "กำลังเพิ่ม...";
   try {
     const res = await authFetch("/villages", {
       method: "POST",
-      body: JSON.stringify({ tambon_id: currentTambonId, moo, name_th, name_source: "manual (admin-setup Phase 3)" }),
+      body: JSON.stringify({
+        tambon_id: currentTambonId,
+        moo,
+        name_th,
+        name_source: "manual (admin-setup Phase 3)",
+        ...optionalFields,
+      }),
     });
     const body = await res.json();
     if (!res.ok) throw new Error(body.detail || "เพิ่มหมู่บ้านไม่สำเร็จ");
-    villages.push({ village_id: body.village_id, moo: body.moo, name_th: body.name_th, area_rai: 0 });
+    villages.push({ ...body, area_rai: 0 });
     renderVillageTable();
-    document.getElementById("village-moo").value = "";
-    document.getElementById("village-name").value = "";
+    clearVillageForm();
     statusEl.innerHTML = '<span class="ok">เพิ่ม "' + body.name_th + '" แล้ว — วาดขอบเขตในตารางด้านล่าง</span>';
     document.getElementById("step3").classList.add("active");
   } catch (err) {
