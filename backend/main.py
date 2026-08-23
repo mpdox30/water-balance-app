@@ -47,21 +47,35 @@ app.add_middleware(
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     """ดัก unhandled exception ทุกตัว (เช่น Postgres/PostGIS reject insert เพราะ geometry ผิด
-    dimension) ให้ตอบกลับเป็น JSON ที่ผ่าน CORSMiddleware เสมอ
+    dimension) ให้ตอบกลับเป็น JSON พร้อม error message จริง แทนที่จะปล่อยให้หลุดไปเป็น "Failed to
+    fetch" เฉยๆ ฝั่ง frontend
 
-    เหตุผลที่ต้องมี: ถ้าปล่อยให้ exception หลุดออกไปโดยไม่ถูกจับ (ไม่มี handler ตรงกับ exception
-    class นั้นเลย) Starlette จะให้ ServerErrorMiddleware (ซึ่งอยู่ "นอก" CORSMiddleware ในลำดับชั้น
-    middleware) เป็นคนตอบ 500 แทน — response นั้นจะไม่มี Access-Control-Allow-Origin header เลย
-    ทำให้ browser ฝั่ง frontend มองว่าเป็น CORS error / "Failed to fetch" แทนที่จะเห็น error
-    message จริงๆ ว่าเกิดอะไรขึ้น (ดีบักยากมาก เจอเคสนี้ตรงๆ ใน Phase 3.1 ตอนอัปโหลดไฟล์ KML ที่มี
-    altitude/Z ติดมาในทุกจุดพิกัด ทำให้ insert เป็น PolygonZ ผิด type กับคอลัมน์
-    geometry(Polygon,4326) ที่ประกาศเป็น 2 มิติล้วน — ผู้ใช้เห็นแค่ "Failed to fetch" ทั้งที่จริงๆ
-    แล้ว backend ตอบ 500 มาแล้วพร้อม error message ที่ชัดเจน)
+    ข้อควรระวังสำคัญ (แก้ไขเมื่อเจอ CORS error ซ้ำๆ ทั้งที่ deploy allow_methods ครบแล้ว — Phase 6):
+    handler ที่ผูกกับ `Exception` แบบนี้ Starlette เอาไปผูกเป็น `handler` ของ ServerErrorMiddleware
+    โดยเฉพาะ (ดู Starlette source: applications.py -> build_middleware_stack — ถ้า key เป็น
+    Exception หรือ 500 จะไม่เอาไปใส่ใน ExceptionMiddleware ตามปกติ) และ ServerErrorMiddleware ถูก
+    ครอบอยู่ "รอบนอกสุด" ของ middleware stack ทั้งหมด รวมถึงอยู่นอก CORSMiddleware ที่เรา
+    app.add_middleware ไว้ด้านบนด้วย!
+
+    เท่ากับว่า "ไม่ว่าจะมี handler ตัวนี้หรือไม่" response ที่มาจากตรงนี้ก็ไม่เคยผ่าน CORSMiddleware
+    เลยสักครั้ง (เข้าใจผิดมาตลอดว่ามี handler แล้วจะปลอดภัย) — ต้อง set Access-Control-Allow-Origin
+    เองตรงนี้ตรงๆ ถึงจะให้ browser (frontend บน GitHub Pages) อ่าน response นี้ได้ ไม่งั้น browser
+    จะรายงานเป็น "blocked by CORS policy: No 'Access-Control-Allow-Origin' header" ทับ error จริง
+    จนมองไม่เห็นว่า backend ตอบ 500 มาแล้วพร้อมเหตุผลชัดเจน (เจอเคสนี้ตรงๆ ตอน PUT
+    /water-sources/{id}/village-usage ล้มเหลว — status จริงคือ 500 แต่ browser เห็นแค่ CORS block)
 
     การมี handler ระดับ Exception ที่ FastAPI/Starlette เจาะจงกว่านี้ (เช่น HTTPException) จะยังถูก
-    เลือกใช้ก่อนเสมอ (เดินตาม MRO ของ exception class) endpoint ที่ raise HTTPException เองจึงทำงาน
-    เหมือนเดิมทุกประการ — handler นี้ดักเฉพาะ exception ที่ "ไม่ได้ตั้งใจ" เท่านั้น"""
-    return JSONResponse(status_code=500, content={"detail": f"เกิดข้อผิดพลาดที่ไม่คาดคิดฝั่งเซิร์ฟเวอร์: {exc}"})
+    เลือกใช้ก่อนเสมอ (เดินตาม MRO ของ exception class, และ HTTPException ยังคงถูกจัดการผ่าน
+    ExceptionMiddleware ที่อยู่ "ใน" CORSMiddleware ตามปกติ ไม่ได้รับผลกระทบจากเรื่องนี้) endpoint
+    ที่ raise HTTPException เองจึงทำงานเหมือนเดิมทุกประการ — handler นี้ดักเฉพาะ exception ที่
+    "ไม่ได้ตั้งใจ" เท่านั้น"""
+    origin = request.headers.get("origin")
+    headers = {"Access-Control-Allow-Origin": origin} if origin else {}
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"เกิดข้อผิดพลาดที่ไม่คาดคิดฝั่งเซิร์ฟเวอร์: {exc}"},
+        headers=headers,
+    )
 
 
 app.include_router(api_router)
