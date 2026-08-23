@@ -194,7 +194,7 @@ def fetch_cropping_calendar(conn, tambon_id: str) -> dict:
 def fetch_villages_with_population(conn, tambon_id: str) -> list[dict]:
     with conn.cursor() as cur:
         cur.execute(
-            "select village_id, name_th, moo, population from villages where tambon_id = %s order by moo",
+            "select village_id, name_th, moo, population, total_rai from villages where tambon_id = %s order by moo",
             (tambon_id,),
         )
         return cur.fetchall()
@@ -272,6 +272,42 @@ def fetch_village_pond_stock(conn, tambon_id: str) -> dict:
             (tambon_id,),
         )
         return {row["village_id"]: float(row["total_m3"]) for row in cur.fetchall()}
+
+
+def fetch_village_runoff_coefficients(conn, tambon_id: str, month: str) -> dict:
+    """คืน {village_id: runoff_coefficient} จาก zone_landcover_monthly ของเดือนนั้น — มาจาก land cover
+    classification ใน pipeline/run_monthly.py (Phase 2) อยู่ก่อนแล้ว ยังไม่เคยถูกใช้ในสมดุลน้ำ (Phase 5)
+    เลยจนกระทั่ง compute_runoff_estimate() ใน balance_engine.py (2569-08) — หมู่บ้านไหนไม่มีแถวของเดือนนั้น
+    (เช่น land cover ยังไม่เคยรันของเดือนนั้น) จะไม่มีคีย์ใน dict นี้เลย"""
+    with conn.cursor() as cur:
+        cur.execute(
+            "select z.village_id, z.runoff_coefficient from zone_landcover_monthly z "
+            "join villages v on v.village_id = z.village_id "
+            "where v.tambon_id = %s and z.month = %s and z.runoff_coefficient is not null",
+            (tambon_id, month),
+        )
+        return {row["village_id"]: float(row["runoff_coefficient"]) for row in cur.fetchall()}
+
+
+def upsert_runoff_estimate_monthly(
+    conn, village_id: str, month: str,
+    rainfall_mm: float | None, runoff_coefficient: float | None, total_rai: float | None,
+    runoff_volume_m3: float | None,
+):
+    """เขียนประมาณการน้ำท่าลงตาราง runoff_estimate_monthly — ตารางนี้แยกจาก water_balance_monthly โดยเด็ดขาด
+    ไม่ถูกรวมเข้า supply_cum ของสมดุลน้ำเลย (ดูคอมเมนต์ตารางในฐานข้อมูล) ใช้แค่ดูขนาดน้ำท่าประมาณการก่อน
+    ตัดสินใจว่าจะเอามารวมยังไง"""
+    with conn.cursor() as cur:
+        cur.execute(
+            "insert into runoff_estimate_monthly "
+            "(village_id, month, rainfall_mm, runoff_coefficient, total_rai, runoff_volume_m3, computed_at) "
+            "values (%s, %s, %s, %s, %s, %s, now()) "
+            "on conflict (village_id, month) do update set "
+            "rainfall_mm = excluded.rainfall_mm, runoff_coefficient = excluded.runoff_coefficient, "
+            "total_rai = excluded.total_rai, runoff_volume_m3 = excluded.runoff_volume_m3, "
+            "computed_at = excluded.computed_at",
+            (village_id, month, rainfall_mm, runoff_coefficient, total_rai, runoff_volume_m3),
+        )
 
 
 def write_balance_results(conn, tambon_id, month, crop_demand_rows, livestock_demand_rows, balance_rows):

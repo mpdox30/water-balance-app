@@ -20,10 +20,16 @@ balance_engine.py — Phase 5: คำนวณสมดุลน้ำ 4 หม�
   (ค่าคงที่ 2 กับ 50 อยู่ใน water_demand_constants — คำนวณย้อนจากไฟล์ V4 ตาม 00-system-design-reset.md ข้อ 2.2)
 - น้ำปศุสัตว์ (livestock)  = จำนวนหัวสัตว์ต่อชนิด × ค่าคงที่ ลบ.ม./ตัว/ปี (water_demand_constants) ÷ 12
   (หาร 12 เกลี่ยเท่ากันทุกเดือน — ยังไม่มีข้อมูลฤดูกาลการเลี้ยงจริง ถือเป็นค่าประมาณเบื้องต้น)
-- น้ำเกษตร (agri) ต่อแถวพืช = ET0(มม.) × Kc(เดือนนั้น) × พื้นที่ปลูก(ไร่) × 1.6   [FAO-56 Single Crop Coefficient]
+- น้ำเกษตร (agri) ต่อแถวพืช = max(0, ETc(มม.) − ฝนใช้ประโยชน์ได้(มม.)) × พื้นที่ปลูก(ไร่) × 1.6
+  โดย ETc = ET0(มม.) × Kc(เดือนนั้น)   [FAO-56 Single Crop Coefficient]
   Kc มาจาก crop_kc_reference (กลุ่มพืช, ดูตาราง crop_group_alias สำหรับการจับคู่ชื่อพืชจริง -> กลุ่ม)
   พืชกลุ่ม seasonal ใช้ growth curve (ini/dev/mid/late ตาม planting_month_default)
   พืชกลุ่ม perennial_flat ใช้ Kc คงที่ตัวเดียวทั้งปี (ไม่มีข้อมูลปีที่ปลูก/อายุต้นไม้ยืนต้น)
+  "ฝนใช้ประโยชน์ได้" (effective rainfall) คำนวณจาก rainfall_mm ทั้งเดือนของตำบลนั้นด้วยสูตร USDA Soil
+  Conservation Service (SCS) ตามที่ FAO Irrigation & Drainage Paper 25 อ้างอิง (ดู effective_rainfall_mm()
+  ด้านล่าง) — เพิ่มเข้ามา 2569-08 แทนที่จะคืนค่า ETc ล้วนๆ เหมือนเดิม (ข้อจำกัดเดิมข้อ 4 ที่เคยแจ้งไว้ ตอนนี้
+  แก้แล้ว) ถ้า rainfall_mm ของเดือนนั้นไม่มีค่า (None) จะถือว่าฝนใช้ประโยชน์ได้ = 0 (ไม่ fabricate ค่าขึ้นมาเอง
+  — เท่ากับพฤติกรรมเดิมก่อนแก้)
 
 - Supply (supply_cum) ต่อหมู่บ้าน = ผลรวม stored_capacity_m3 ของ water_storage_sources ที่ village_id ตรง
   กับหมู่บ้านนั้น (สระ/บ่อระดับหมู่บ้าน) — ใช้ค่าเดียวกัน "ซ้ำ" ทั้ง 4 หมวดต่อแถว เพราะสต็อกน้ำเป็นก้อนเดียว
@@ -48,8 +54,15 @@ balance_engine.py — Phase 5: คำนวณสมดุลน้ำ 4 หม�
 3. ปศุสัตว์: แม่นาเรือกรอกครบทุกหมู่บ้านแล้ว (ยืนยัน 0 ตัวจริงทุกหมู่บ้าน) นครป่าหมากเริ่มกรอกแล้วบางส่วน
    (2569-08) หมู่บ้านที่ยังไม่มีแถว livestock_report เลยถือเป็น "ยังไม่ยืนยัน" ไม่ใช่ "ยืนยันว่าไม่มี" —
    ต่างจากแม่นาเรือที่กรอกยืนยัน 0 ไว้ครบทุกหมู่บ้านแล้วจริงๆ
-4. ไม่ได้หักฝนที่ตกลงมา (effective rainfall) ออกจาก agri_demand — คืนค่า "ความต้องการน้ำรวม" (ETc) ล้วนๆ
-   ตามที่ 03_legacy_prototype/Final/crop_water_demand.py ออกแบบไว้เดิม (ดู docstring ของไฟล์นั้น ข้อ 208-211)
+4. (แก้แล้ว 2569-08) เดิมไม่ได้หักฝนที่ตกลงมา (effective rainfall) ออกจาก agri_demand เลย ตอนนี้หักแล้ว
+   ด้วยสูตร USDA SCS (ดู effective_rainfall_mm()) — ผลคือ crop_water_demand_monthly.demand_cum ตอนนี้คือ
+   "ความต้องการน้ำชลประทานสุทธิ" (net irrigation requirement) ไม่ใช่ ETc ดิบๆ เหมือนก่อนหน้านี้แล้ว ถ้า
+   ต้องการดู ETc ดิบ (ก่อนหักฝน) ต้องคำนวณแยกเอง ไม่ได้เก็บไว้ในตารางนี้
+5. น้ำท่า/runoff ยังไม่ถูกนับเป็นน้ำต้นทุน (supply_cum) เลย — supply_cum มาจากสต็อกในสระ/บ่อ/อ่างเก็บน้ำ
+   เท่านั้น ตั้งใจไม่รวมน้ำท่าเข้าไปตรงๆ เพราะเป็นคนละหน่วย (flow vs stock) และเสี่ยงนับซ้ำกับน้ำที่ไหลเข้า
+   สระอยู่แล้ว — เพิ่มตาราง runoff_estimate_monthly แยกต่างหาก (2569-08) ให้ดูขนาดน้ำท่าประมาณการก่อน
+   ตัดสินใจว่าจะเอามารวมในสมดุลยังไง (ดู compute_runoff_estimate() ด้านล่าง) — ยังไม่ตัดสินใจ รอดูตัวเลข
+   จริงก่อน
 """
 import datetime
 import sys
@@ -65,6 +78,26 @@ MM_RAI_TO_CUM = 1.6  # 1 มม. บนพื้นที่ 1 ไร่ = 1.6 �
 def days_in_month(y: int, m: int) -> int:
     nm = datetime.date(y + 1, 1, 1) if m == 12 else datetime.date(y, m + 1, 1)
     return (nm - datetime.date(y, m, 1)).days
+
+
+def effective_rainfall_mm(total_rainfall_mm) -> float:
+    """สูตร USDA Soil Conservation Service (SCS) สำหรับฝนใช้ประโยชน์ได้รายเดือน (ตามที่ FAO Irrigation &
+    Drainage Paper 25 อ้างอิง — ใช้กันแพร่หลายใน CROPWAT และงานคำนวณ net irrigation requirement ทั่วไป)
+    รับฝนรวมทั้งเดือน (มม.) คืนฝนใช้ประโยชน์ได้ (มม., เป็นสัดส่วนลดหลั่นเมื่อฝนเยอะขึ้น เพราะส่วนเกินไหลทิ้ง/
+    ซึมเกินรากพืชไป ไม่ได้ถูกพืชใช้ทั้งหมด) — คืน 0.0 ถ้า total_rainfall_mm เป็น None หรือ ≤ 0 (ไม่ fabricate
+    ค่าขึ้นมาเอง ถือว่าไม่รู้ค่าฝน = ไม่ให้เครดิตฝนช่วย เหมือนพฤติกรรมเดิมก่อนแก้)
+
+    Pe = Ptot × (125 − 0.2×Ptot) / 125   เมื่อ Ptot ≤ 250 มม.
+    Pe = 125 + 0.1×Ptot                  เมื่อ Ptot > 250 มม.
+    """
+    if total_rainfall_mm is None or total_rainfall_mm <= 0:
+        return 0.0
+    p = float(total_rainfall_mm)
+    if p <= 250:
+        pe = p * (125 - 0.2 * p) / 125
+    else:
+        pe = 125 + 0.1 * p
+    return max(0.0, pe)
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +240,13 @@ def run_for_tambon(conn, tambon: dict, year: int, month: int) -> None:
               f"et0_mm ของเดือนปฏิทินเดียวกันจากปีก่อนหน้า = {et0_mm:.1f} มม. แทนชั่วคราว "
               f"(จะคำนวณซ้ำอัตโนมัติด้วยค่าจริงเมื่อ pipeline/run_monthly.py รันของเดือนนี้สำเร็จ)")
 
+    eff_rain_mm = effective_rainfall_mm(climate.get("rainfall_mm"))
+    if climate.get("rainfall_mm") is None:
+        print(f"  [ไม่มีข้อมูลฝน] {tambon['name_th']}: ไม่มี rainfall_mm ของเดือน {month_date} — ถือว่าฝนใช้ "
+              f"ประโยชน์ได้ = 0 มม. (ไม่หักออกจาก ETc เลยเดือนนี้)")
+    else:
+        print(f"  ฝนรวม={float(climate['rainfall_mm']):.1f} มม. → ฝนใช้ประโยชน์ได้ (SCS)={eff_rain_mm:.1f} มม.")
+
     kc_reference = db.fetch_kc_reference(conn)  # {group_name: dict_row} — ค่า global (fallback)
     calendar_rows_by_group = db.fetch_cropping_calendar(conn, tambon_id)  # {group_name: [row, ...]} เฉพาะตำบลนี้
     kc_cache: dict = {}
@@ -242,7 +282,9 @@ def run_for_tambon(conn, tambon: dict, year: int, month: int) -> None:
         kc = kc_for_group(group)
         demand = 0.0
         if kc is not None and area > 0:
-            demand = round(et0_mm * kc * area * MM_RAI_TO_CUM, 2)
+            etc_mm = et0_mm * kc
+            net_mm = max(0.0, etc_mm - eff_rain_mm)  # หักฝนใช้ประโยชน์ได้ออกก่อน ไม่ให้ติดลบ
+            demand = round(net_mm * area * MM_RAI_TO_CUM, 2)
         crop_demand_out.append((vid, month_date, raw, demand))
         village_agri_demand[vid] = village_agri_demand.get(vid, 0.0) + demand
 
@@ -286,6 +328,35 @@ def run_for_tambon(conn, tambon: dict, year: int, month: int) -> None:
     conn.commit()
     print(f"  {tambon['name_th']}: เขียน crop_demand={len(crop_demand_out)} แถว, "
           f"livestock_demand={len(livestock_demand_out)} แถว, balance={len(balance_out)} แถว")
+
+    n_runoff = compute_runoff_estimate(conn, tambon_id, month_date, villages, climate.get("rainfall_mm"))
+    print(f"  {tambon['name_th']}: เขียน runoff_estimate={n_runoff} หมู่บ้าน "
+          f"(ตาราง runoff_estimate_monthly แยกต่างหาก — ไม่ถูกรวมใน supply_cum ของสมดุลน้ำ)")
+
+
+def compute_runoff_estimate(conn, tambon_id: str, month_date: str, villages: list[dict], rainfall_mm) -> int:
+    """คำนวณ+เขียนประมาณการน้ำท่า (runoff) ลงตาราง runoff_estimate_monthly — แยกจากการคำนวณสมดุลน้ำโดยเด็ดขาด
+    ไม่มีผลต่อ supply_cum/demand_cum/balance_cum ของ water_balance_monthly เลยแม้แต่นิดเดียว (เพิ่ม 2569-08
+    ให้ดูขนาดน้ำท่าประมาณการก่อนตัดสินใจว่าจะเอามารวมยังไง — ดูข้อจำกัดข้อ 5 ในหัวไฟล์ และคอมเมนต์ตารางใน
+    ฐานข้อมูล) สูตร: runoff_volume_m3 = rainfall_mm(ตำบล) x runoff_coefficient(หมู่บ้าน) x total_rai(หมู่บ้าน)
+    x 1.6 — เป็น "ศักยภาพน้ำท่ารวม" ไม่ใช่น้ำที่ดักเก็บใช้ได้จริง คืนจำนวนหมู่บ้านที่คำนวณได้สำเร็จ (ไว้ print สรุป)
+    หมู่บ้านที่ขาดข้อมูล (ไม่มี runoff_coefficient ของเดือนนั้น, ไม่มี total_rai, หรือไม่มี rainfall_mm) จะถูก
+    ข้ามไปเงียบๆ ไม่ fabricate ค่าขึ้นมาเอง"""
+    runoff_coefficients = db.fetch_village_runoff_coefficients(conn, tambon_id, month_date)
+    n_written = 0
+    for v in villages:
+        vid = v["village_id"]
+        coeff = runoff_coefficients.get(vid)
+        total_rai = v.get("total_rai")
+        if coeff is None or total_rai is None or rainfall_mm is None:
+            continue
+        runoff_volume_m3 = round(float(rainfall_mm) * coeff * float(total_rai) * MM_RAI_TO_CUM, 2)
+        db.upsert_runoff_estimate_monthly(
+            conn, vid, month_date, float(rainfall_mm), coeff, float(total_rai), runoff_volume_m3
+        )
+        n_written += 1
+    conn.commit()
+    return n_written
 
 
 def resolve_target_year_month(argv: list[str]) -> tuple[int, int]:
