@@ -1015,6 +1015,8 @@ const SOURCE_TYPES_WITHOUT_CAPACITY = new Set(["weir"]);
 document.getElementById("source-type").addEventListener("change", (e) => {
   const noCapacity = SOURCE_TYPES_WITHOUT_CAPACITY.has(e.target.value);
   document.getElementById("source-capacity-group").style.display = noCapacity ? "none" : "";
+  // source-level-pct (% ของความจุ) อยู่ใน source-capacity-group เดียวกัน ซ่อน/แสดงพร้อมกันเสมอ
+  // (ไม่มีความหมายถ้าไม่มีความจุอ้างอิง เช่น ฝาย)
   document.getElementById("source-dimension-group").style.display = noCapacity ? "" : "none";
 });
 
@@ -1027,6 +1029,7 @@ document.getElementById("btn-save-source").addEventListener("click", async () =>
   const village_id = document.getElementById("source-village").value || null;
   const capacityRaw = document.getElementById("source-capacity").value;
   const dimensionRaw = document.getElementById("source-dimension").value.trim();
+  const levelPctRaw = document.getElementById("source-level-pct").value;
   if (!name_th) {
     statusEl.textContent = "กรอกชื่อแหล่งน้ำก่อน";
     return;
@@ -1050,6 +1053,9 @@ document.getElementById("btn-save-source").addEventListener("click", async () =>
         lon: latlng.lng,
         stored_capacity_m3: !isWeir && capacityRaw ? parseFloat(capacityRaw) : null,
         capacity_source_note: capacitySourceNote,
+        // % ของความจุ ณ วันที่กรอก — ใช้เป็นจุดเริ่มต้นของแบบจำลองสต็อกน้ำรายเดือน (อยู่ระหว่างออกแบบ)
+        // ไม่มีความหมายถ้าไม่มีความจุอ้างอิง (ฝาย) จึงส่งเฉพาะกรณีไม่ใช่ฝาย
+        initial_level_pct: !isWeir && levelPctRaw ? parseFloat(levelPctRaw) : null,
       }),
     });
     const body = await res.json();
@@ -1067,6 +1073,7 @@ document.getElementById("btn-save-source").addEventListener("click", async () =>
     document.getElementById("source-name").value = "";
     document.getElementById("source-capacity").value = "";
     document.getElementById("source-dimension").value = "";
+    document.getElementById("source-level-pct").value = "";
     document.getElementById("step4").classList.add("active");
     document.getElementById("step5").classList.add("active");
   } catch (err) {

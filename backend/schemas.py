@@ -170,6 +170,10 @@ class WaterSourceCreateRequest(BaseModel):
     lon: Optional[float] = None
     built_by: Optional[str] = None
     beneficiary_agri_rai: Optional[float] = None
+    # ปริมาณน้ำโดยประมาณ ณ วันที่กรอก (% ของ stored_capacity_m3) — เพิ่ม 2569-08-24 ให้แบบจำลองสต็อกน้ำ
+    # รายเดือน (อยู่ระหว่างออกแบบ) มีจุดเริ่มต้นจริงแทนการสมมติว่าเต็มความจุเสมอ — ตั้งใจให้เป็น % คร่าวๆ
+    # ไม่ใช่ปริมาตร/ความลึก เพื่อไม่เพิ่มภาระกรอกข้อมูลถ้ามีหลายแหล่งน้ำ (ดูคอมเมนต์คอลัมน์ในฐานข้อมูล)
+    initial_level_pct: Optional[float] = Field(default=None, ge=0, le=100)
 
 
 class WaterSourceResponse(BaseModel):
@@ -187,6 +191,7 @@ class WaterSourceResponse(BaseModel):
     lon: Optional[float] = None
     built_by: Optional[str] = None
     beneficiary_agri_rai: Optional[float] = None
+    initial_level_pct: Optional[float] = None
 
 
 # ---------- Reservoir -> village usage matrix (Phase 6 — จัดสรรอ่างเก็บน้ำระดับตำบลให้หมู่บ้านที่ใช้จริง)

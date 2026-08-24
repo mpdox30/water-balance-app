@@ -440,7 +440,7 @@ def _row_to_boundary_part(row) -> VillageBoundaryPartResponse:
 _SOURCE_COLS = (
     "source_id, tambon_id, village_id, source_type, name_th, name_en, telemetry_code, "
     "stored_capacity_m3, catchment_yield_potential_m3_per_year, capacity_source_note, "
-    "lat, lon, built_by, beneficiary_agri_rai"
+    "lat, lon, built_by, beneficiary_agri_rai, initial_level_pct"
 )
 
 
@@ -463,6 +463,7 @@ def _row_to_source(row) -> WaterSourceResponse:
         lon=_f(row["lon"]),
         built_by=row["built_by"],
         beneficiary_agri_rai=_f(row["beneficiary_agri_rai"]),
+        initial_level_pct=_f(row["initial_level_pct"]),
     )
 
 
@@ -509,8 +510,8 @@ def create_water_source(body: WaterSourceCreateRequest, _admin: dict = Depends(r
             cur.execute(
                 "insert into water_storage_sources (tambon_id, village_id, source_type, name_th, name_en, "
                 "telemetry_code, stored_capacity_m3, catchment_yield_potential_m3_per_year, "
-                "capacity_source_note, lat, lon, built_by, beneficiary_agri_rai) "
-                "values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                "capacity_source_note, lat, lon, built_by, beneficiary_agri_rai, initial_level_pct) "
+                "values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
                 f"returning {_SOURCE_COLS}",
                 (
                     body.tambon_id,
@@ -526,6 +527,7 @@ def create_water_source(body: WaterSourceCreateRequest, _admin: dict = Depends(r
                     body.lon,
                     body.built_by,
                     body.beneficiary_agri_rai,
+                    body.initial_level_pct,
                 ),
             )
             row = cur.fetchone()
