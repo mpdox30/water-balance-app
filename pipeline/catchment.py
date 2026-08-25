@@ -48,8 +48,14 @@ def compute_source_catchment_area_km2(
     search_radius_m รอบจุด (lat, lon) — ดูเหตุผลวิธี "snap to max" ในคอมเมนต์หัวไฟล์
 
     คืน None ถ้า reduceRegion ไม่ได้ผลลัพธ์เลย (เช่น พิกัดอยู่นอกขอบเขตที่ MERIT-Hydro ครอบคลุม — ไม่ควร
-    เกิดในทางปฏิบัติเพราะ dataset นี้ครอบคลุมเกือบทั้งโลกยกเว้นบริเวณขั้วโลก)"""
-    point = ee.Geometry.Point([lon, lat])
+    เกิดในทางปฏิบัติเพราะ dataset นี้ครอบคลุมเกือบทั้งโลกยกเว้นบริเวณขั้วโลก)
+
+    lat/lon cast เป็น float() ตรงนี้เสมอ — water_storage_sources.lat/lon เป็นคอลัมน์ numeric ซึ่ง psycopg
+    คืนเป็น decimal.Decimal ไม่ใช่ float/int ธรรมดา และ ee.Geometry.Point() เช็คชนิดข้อมูลแบบ isinstance
+    (int, float) ตรงๆ ไม่รู้จัก Decimal เลย ทำให้ได้ EEException('Invalid geometry.') แม้พิกัดจะถูกต้องสมบูรณ์
+    ก็ตาม (เจอจริงตอนรัน GitHub Actions ครั้งแรก 2569-08-25 — ทุกแหล่งน้ำ 91/91 พิกัดถูกต้อง ปัญหาคือชนิดข้อมูล
+    ล้วนๆ)"""
+    point = ee.Geometry.Point([float(lon), float(lat)])
     search_area = point.buffer(search_radius_m)
 
     upa = ee.Image(MERIT_HYDRO_ASSET).select("upa")
@@ -73,7 +79,14 @@ def compute_missing_catchment_areas(conn, db) -> int:
     sources = db.fetch_sources_missing_catchment_area(conn)
     n_done = 0
     for src in sources:
-        area_km2 = compute_source_catchment_area_km2(src["lat"], src["lon"])
+        try:
+            area_km2 = compute_source_catchment_area_km2(src["lat"], src["lon"])
+        except Exception as e:
+            # กันไม่ให้แหล่งน้ำแหล่งเดียวที่มีปัญหา (เช่น GEE timeout ชั่วคราว, พิกัดประหลาด) ทำให้ทั้ง
+            # run_monthly.py ล้มทั้งรัน (ตำบล/หมู่บ้านอื่นที่รอ rainfall/ET0/landcover ของเดือนนี้จะไม่ได้รันเลย
+            # ถ้าปล่อยให้ exception หลุดออกไปตรงนี้) — log ให้เห็นชัดแล้วข้ามไปแหล่งถัดไปแทน ไม่ fabricate ค่า
+            print(f"    [ERROR ข้าม] {src['name_th']}: {type(e).__name__}: {e}")
+            continue
         if area_km2 is None:
             print(f"    [ข้าม] {src['name_th']}: MERIT-Hydro ไม่คืนค่า upa ที่พิกัดนี้เลย")
             continue
