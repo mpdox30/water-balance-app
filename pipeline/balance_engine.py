@@ -68,6 +68,7 @@ import datetime
 import sys
 
 import db
+import storage_depletion
 
 # ---------------------------------------------------------------------------
 # 1. ค่าคงที่ทั่วไป
@@ -332,6 +333,11 @@ def run_for_tambon(conn, tambon: dict, year: int, month: int) -> None:
     n_runoff = compute_runoff_estimate(conn, tambon_id, month_date, villages, climate.get("rainfall_mm"))
     print(f"  {tambon['name_th']}: เขียน runoff_estimate={n_runoff} หมู่บ้าน "
           f"(ตาราง runoff_estimate_monthly แยกต่างหาก — ไม่ถูกรวมใน supply_cum ของสมดุลน้ำ)")
+
+    n_storage = storage_depletion.compute_storage_depletion(conn, db, tambon, year, month, month_date)
+    print(f"  {tambon['name_th']}: เขียน storage_depletion={n_storage} แหล่งน้ำ "
+          f"(ตาราง storage_depletion_monthly แยกต่างหาก — ต้องมี runoff_estimate_monthly/water_balance_monthly "
+          f"ของเดือนนี้ก่อนแล้วเท่านั้น ดู pipeline/storage_depletion.py หัวไฟล์)")
 
 
 def compute_runoff_estimate(conn, tambon_id: str, month_date: str, villages: list[dict], rainfall_mm) -> int:

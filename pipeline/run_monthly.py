@@ -16,10 +16,16 @@ workflow_dispatch ของ gee-pipeline.yml ช่อง backfill_start/backfil
 Environment variables ที่ต้องตั้ง:
     DATABASE_URL          — เหมือนกับ backend (Supabase Transaction pooler)
     EE_SERVICE_ACCOUNT_KEY — เนื้อหา JSON เต็มของ GEE service account (ดู pipeline/gee_init.py)
+
+2569-08 เพิ่มขั้นตอนคำนวณ catchment_area_km2 (พื้นที่ลุ่มน้ำ) ของแหล่งเก็บน้ำใน water_storage_sources
+ก่อน loop ตำบล — เป็นงานที่ทำครั้งเดียวต่อแหล่งน้ำ (ภูมิประเทศไม่เปลี่ยนรายเดือน ต่างจาก rainfall/ET0/
+landcover ด้านล่างที่คำนวณใหม่ทุกเดือน) เก็บผลไว้ใช้ต่อใน pipeline/storage_depletion.py (Phase 6, เรียก
+จาก balance_engine.py) ดู pipeline/catchment.py หัวไฟล์สำหรับวิธีคำนวณ
 """
 import datetime
 import sys
 
+import catchment
 import db
 import gee_init
 from landcover import compute_landcover_breakdown
@@ -90,6 +96,10 @@ def main():
 
     conn = db.get_conn()
     try:
+        print("พื้นที่ลุ่มน้ำ (catchment_area_km2) ของแหล่งน้ำที่ยังไม่เคยคำนวณ...")
+        n_catchment = catchment.compute_missing_catchment_areas(conn, db)
+        print(f"  คำนวณใหม่ {n_catchment} แหล่งน้ำ (คำนวณครั้งเดียวต่อแหล่ง — ดู pipeline/catchment.py หัวไฟล์)")
+
         tambons = db.fetch_tambons(conn)
         print(f"พบ {len(tambons)} ตำบลในระบบ")
         for tambon in tambons:

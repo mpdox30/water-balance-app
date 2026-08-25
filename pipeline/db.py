@@ -21,8 +21,11 @@ def get_conn():
 
 
 def fetch_tambons(conn, only_pilot: bool = False) -> list[dict]:
-    """คืนทุกตำบล พร้อม geometry เป็น GeoJSON dict (None ถ้ายังไม่มี geometry)"""
-    sql = "select tambon_id, name_th, ST_AsGeoJSON(geom)::json as geom_geojson from tambons"
+    """คืนทุกตำบล พร้อม geometry เป็น GeoJSON dict (None ถ้ายังไม่มี geometry)
+    province_th เพิ่มเข้ามา 2569-08 ให้ storage_depletion.py ใช้ตัดสินใจว่าอ่างเก็บน้ำของตำบลนี้อยู่ใน
+    ขอบเขต "ภาคเหนือ" ที่ regional_seasonal_storage_factor รองรับหรือไม่ (ดู
+    storage_depletion.py::NORTHERN_THAILAND_PROVINCES_TH)"""
+    sql = "select tambon_id, name_th, province_th, ST_AsGeoJSON(geom)::json as geom_geojson from tambons"
     if only_pilot:
         sql += " where is_pilot = true"
     with conn.cursor() as cur:
@@ -337,4 +340,150 @@ def write_balance_results(conn, tambon_id, month, crop_demand_rows, livestock_de
             "(village_id, month, category, supply_cum, demand_cum, balance_cum, status, computed_at) "
             "values (%s, %s, %s, %s, %s, %s, %s, now())",
             balance_rows,
+        )
+
+
+# =============================================================================
+# เพิ่มเติมสำหรับ storage_depletion (สต๊อกน้ำรายแหล่ง/รายเดือน) — 2569-08
+# ใช้ทั้งฝั่ง pipeline/catchment.py (GEE, เรียกจาก run_monthly.py) และ
+# pipeline/storage_depletion.py (DB-only, เรียกจาก balance_engine.py) — ดู
+# runoff-depletion-model-design.html §04/§05 สำหรับที่มาของการออกแบบ
+# =============================================================================
+
+def fetch_sources_missing_catchment_area(conn) -> list[dict]:
+    """คืนแหล่งน้ำ (ทุกตำบล) ที่มีพิกัด lat/lon แต่ยังไม่เคยคำนวณ catchment_area_km2 เลย — ใช้จาก
+    pipeline/run_monthly.py ตอนเริ่มรัน (ก่อน loop ตำบล) เพราะเป็นงานคำนวณครั้งเดียวไม่ผูกกับเดือนไหน
+    (ภูมิประเทศไม่เปลี่ยน) ต่างจาก rainfall/ET0/landcover ที่ต้องคำนวณใหม่ทุกเดือน — เช็ค
+    catchment_area_computed_at IS NULL เป็นตัวกันไม่ให้เรียก GEE ซ้ำโดยไม่จำเป็น"""
+    with conn.cursor() as cur:
+        cur.execute(
+            "select source_id, name_th, lat, lon from water_storage_sources "
+            "where lat is not null and lon is not null and catchment_area_computed_at is null"
+        )
+        return cur.fetchall()
+
+
+def upsert_source_catchment_area(conn, source_id: str, catchment_area_km2: float):
+    with conn.cursor() as cur:
+        cur.execute(
+            "update water_storage_sources set catchment_area_km2 = %s, catchment_area_computed_at = now() "
+            "where source_id = %s",
+            (catchment_area_km2, source_id),
+        )
+
+
+def fetch_water_storage_sources(conn, tambon_id: str) -> list[dict]:
+    """คืนแหล่งน้ำทั้งหมดของตำบล พร้อมฟิลด์ที่ pipeline/storage_depletion.py ต้องใช้ — ทุกประเภท (ไม่กรอง
+    source_type ตรงนี้ ให้ compute_storage_depletion() เป็นคนตัดสินใจว่าประเภทไหนมีโมเดลรองรับแล้วบ้าง
+    ตาม CAPTURE_EFFICIENCY_BY_SOURCE_TYPE — สอดคล้องกับคอมเมนต์ตาราง storage_depletion_monthly ในฐานข้อมูล
+    ที่ระบุไว้ชัดว่า groundwater_well/mountain_spring/purchased_external/small_water_source ยังไม่มีโมเดล)"""
+    with conn.cursor() as cur:
+        cur.execute(
+            "select source_id, tambon_id, village_id, source_type, name_th, "
+            "stored_capacity_m3, initial_level_pct, catchment_area_km2 "
+            "from water_storage_sources where tambon_id = %s",
+            (tambon_id,),
+        )
+        return cur.fetchall()
+
+
+def fetch_previous_storage_end(conn, source_ids: list[str], prev_month: str) -> dict:
+    """คืน {source_id: storage_end_m3} ของเดือนก่อนหน้า (prev_month) — ใช้เป็น storage_start_m3 ของเดือนนี้
+    (ต่อเนื่องกันเป็น chain เดือนต่อเดือน) แหล่งน้ำไหนไม่มีแถวของเดือนก่อน (เพิ่งเริ่มมีข้อมูล หรือเดือนก่อน
+    ไม่ได้รัน pipeline) จะไม่มีคีย์ใน dict นี้ — ผู้เรียกต้อง bootstrap จาก initial_level_pct แทน (ดู
+    storage_depletion.py::compute_storage_depletion, is_assumed_start=True กรณีนี้)"""
+    if not source_ids:
+        return {}
+    with conn.cursor() as cur:
+        cur.execute(
+            "select source_id, storage_end_m3 from storage_depletion_monthly "
+            "where source_id = any(%s) and month = %s and storage_end_m3 is not null",
+            (source_ids, prev_month),
+        )
+        return {row["source_id"]: float(row["storage_end_m3"]) for row in cur.fetchall()}
+
+
+def fetch_regional_seasonal_factor(conn, source_type: str = "reservoir") -> dict:
+    """คืน {month(int 1-12): avg_pct_full_change(float)} จาก regional_seasonal_storage_factor —
+    ปัจจุบันมี region_key เดียวคือ 'phayao_upper_ing' (จากข้อมูลจริง 4 อ่างที่ตำบลแม่นาเรือเท่านั้น) แต่
+    ตามคอมเมนต์ตาราง เรทนี้ถูกอนุมัติให้ใช้เป็น fallback ของ "อ่างเก็บน้ำในภาคเหนือ (บน+ล่าง) ทุกตำบล" ไม่ใช่
+    เฉพาะลุ่มน้ำอิงตอนบนเท่านั้น — จึงยังไม่กรองด้วย region_key ตรงนี้ (ถ้าอนาคตมีข้อมูลจริงของภูมิภาคอื่นเพิ่ม
+    เข้ามาจะต้องแก้ฟังก์ชันนี้ให้เลือก region_key ตาม tambon ที่เหมาะสมแทนการใช้ตัวเดียวทั้งหมด)"""
+    with conn.cursor() as cur:
+        cur.execute(
+            "select month, avg_pct_full_change from regional_seasonal_storage_factor where source_type = %s",
+            (source_type,),
+        )
+        return {int(row["month"]): float(row["avg_pct_full_change"]) for row in cur.fetchall()}
+
+
+def fetch_runoff_estimate_by_village(conn, tambon_id: str, month: str) -> dict:
+    """คืน {village_id: runoff_volume_m3} ของเดือนนั้น จาก runoff_estimate_monthly — ต้องเรียกหลัง
+    balance_engine.py::compute_runoff_estimate() เขียนของเดือนนี้เสร็จแล้วในรันเดียวกันเสมอ (ดูลำดับเรียกใน
+    run_for_tambon()) หมู่บ้านที่ไม่มีแถว (ขาดข้อมูล runoff_coefficient/total_rai/rainfall_mm เดือนนั้น) จะ
+    ไม่มีคีย์ใน dict นี้"""
+    with conn.cursor() as cur:
+        cur.execute(
+            "select r.village_id, r.runoff_volume_m3 from runoff_estimate_monthly r "
+            "join villages v on v.village_id = r.village_id "
+            "where v.tambon_id = %s and r.month = %s and r.runoff_volume_m3 is not null",
+            (tambon_id, month),
+        )
+        return {row["village_id"]: float(row["runoff_volume_m3"]) for row in cur.fetchall()}
+
+
+def fetch_reservoir_village_usage(conn, tambon_id: str) -> list[dict]:
+    """คืนแถว reservoir_village_usage ของแหล่งน้ำทุกแห่งในตำบลนี้ (join ผ่าน water_storage_sources.tambon_id
+    เพราะตาราง reservoir_village_usage เองไม่มีคอลัมน์ tambon_id) — ตารางนี้มีอยู่แล้วในฐานข้อมูล เก็บการ
+    ใช้น้ำจริงต่อคู่ (แหล่งน้ำ, หมู่บ้าน) ใช้แบ่งสัดส่วน Outflow ให้แหล่งน้ำที่ใช้ร่วมกันหลายหมู่บ้าน (เช่น
+    อ่างเก็บน้ำแม่นาเรือ ที่ 3 หมู่บ้านใช้ร่วมกัน) แทนสมมติฐาน capacity-share ล้วนๆ เมื่อมีข้อมูลการใช้จริง
+    (households/population/irrigated_area_rai) อยู่แล้ว — ดู pipeline/storage_depletion.py"""
+    with conn.cursor() as cur:
+        cur.execute(
+            "select ru.source_id, ru.village_id, ru.use_type, ru.households, ru.population, "
+            "ru.irrigated_area_rai "
+            "from reservoir_village_usage ru "
+            "join water_storage_sources ws on ws.source_id = ru.source_id "
+            "where ws.tambon_id = %s",
+            (tambon_id,),
+        )
+        return cur.fetchall()
+
+
+def fetch_village_total_demand(conn, tambon_id: str, month: str) -> dict:
+    """คืน {village_id: sum(demand_cum) ทั้ง 4 หมวด} ของเดือนนั้น จาก water_balance_monthly — ใช้ประมาณ
+    "ความต้องการใช้น้ำรวม" ของหมู่บ้านนั้น เพื่อคำนวณ outflow_m3 ของแหล่งน้ำที่ผูกกับหมู่บ้านนี้ (ต้องเรียกหลัง
+    balance_engine.py::run_for_tambon() เขียน water_balance_monthly ของเดือนนี้เสร็จแล้วในรันเดียวกันเสมอ)
+    *** เป็นค่าประมาณระดับหมู่บ้าน ไม่ได้แยกว่าแต่ละหมวดดึงน้ำจากแหล่งไหนบ้างจริงๆ (ไม่มีข้อมูลระดับนั้น) ***"""
+    with conn.cursor() as cur:
+        cur.execute(
+            "select village_id, sum(demand_cum) as total_demand from water_balance_monthly "
+            "where village_id in (select village_id from villages where tambon_id = %s) and month = %s "
+            "group by village_id",
+            (tambon_id, month),
+        )
+        return {row["village_id"]: float(row["total_demand"]) for row in cur.fetchall()}
+
+
+def upsert_storage_depletion_monthly(
+    conn, source_id: str, month: str,
+    storage_start_m3, inflow_m3, outflow_m3, loss_m3, overflow_m3, storage_end_m3,
+    unmet_demand_m3, capture_efficiency_used, model_path: str, is_assumed_start: bool,
+):
+    with conn.cursor() as cur:
+        cur.execute(
+            "insert into storage_depletion_monthly "
+            "(source_id, month, storage_start_m3, inflow_m3, outflow_m3, loss_m3, overflow_m3, "
+            "storage_end_m3, unmet_demand_m3, capture_efficiency_used, model_path, is_assumed_start, computed_at) "
+            "values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now()) "
+            "on conflict (source_id, month) do update set "
+            "storage_start_m3 = excluded.storage_start_m3, inflow_m3 = excluded.inflow_m3, "
+            "outflow_m3 = excluded.outflow_m3, loss_m3 = excluded.loss_m3, "
+            "overflow_m3 = excluded.overflow_m3, storage_end_m3 = excluded.storage_end_m3, "
+            "unmet_demand_m3 = excluded.unmet_demand_m3, "
+            "capture_efficiency_used = excluded.capture_efficiency_used, "
+            "model_path = excluded.model_path, is_assumed_start = excluded.is_assumed_start, "
+            "computed_at = excluded.computed_at",
+            (source_id, month, storage_start_m3, inflow_m3, outflow_m3, loss_m3, overflow_m3,
+             storage_end_m3, unmet_demand_m3, capture_efficiency_used, model_path, is_assumed_start),
         )
