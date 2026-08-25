@@ -40,6 +40,7 @@ MOD16A2/Sentinel-1) มีอยู่แล้วในโลกสำหรั
 """
 import sys
 
+import catchment
 import db
 import gee_init
 from run_monthly import run_for_tambon
@@ -77,6 +78,14 @@ def main():
     conn = db.get_conn()
     failed = []
     try:
+        # 2569-08 เพิ่มขั้นตอนเดียวกับ run_monthly.py::main() — สำคัญมากตอน backfill ตำบลใหม่ (ทางเข้ามาตรฐาน
+        # ตอน onboard ตำบลใหม่คือ backfill_monthly.py ไม่ใช่ run_monthly.py เฉยๆ) เพราะสคริปต์นี้ import
+        # run_for_tambon() มาเรียกตรงๆ ข้าม main() ของ run_monthly.py ไปเลย ถ้าไม่เพิ่มตรงนี้ด้วย แหล่งน้ำของ
+        # ตำบลใหม่จะไม่มี catchment_area_km2 เลยจนกว่าจะมีคนรัน run_monthly.py เฉยๆ อีกที (เช่น รอ cron เดือนถัดไป)
+        print("พื้นที่ลุ่มน้ำ (catchment_area_km2) ของแหล่งน้ำที่ยังไม่เคยคำนวณ...")
+        n_catchment = catchment.compute_missing_catchment_areas(conn, db)
+        print(f"  คำนวณใหม่ {n_catchment} แหล่งน้ำ (คำนวณครั้งเดียวต่อแหล่ง — ดู pipeline/catchment.py หัวไฟล์)\n")
+
         tambons = db.fetch_tambons(conn)
         print(f"พบ {len(tambons)} ตำบลในระบบ\n")
 
