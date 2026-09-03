@@ -159,8 +159,10 @@
 
 </div>
 
-<!-- รายการนี้ต้องตรงกับคีย์ใน PRIMARY_TO_GROUP (pipeline/balance_engine.py) เป๊ะๆ ไม่งั้นพืชที่กรอกจะถูกข้าม
-     เงียบๆ ไม่ถูกคิดในสมดุลน้ำ — เพิ่มชื่อพืชใหม่ในนี้ได้ แต่ต้องไปเพิ่ม mapping ที่ backend ด้วยเสมอ -->
+<!-- รายการนี้เป็นแค่ autocomplete suggestion — ไม่ใช่รายการพืชที่ระบบรองรับทั้งหมด (เพิ่ม/ลบชื่อในนี้ได้อิสระ
+     ไม่กระทบการคำนวณ) การ map ชื่อพืชจริงๆ มาจากตาราง crop_group_alias ในฐานข้อมูล (ไม่ใช่โค้ดอีกต่อไปตั้งแต่
+     ส.ค. 2569) ถ้ากรอกชื่อที่ไม่มีใน crop_group_alias ระบบจะแจ้งเตือนแบบไม่ block การส่ง (ดู _unmapped_crop_warning
+     ใน backend/routes.py) แต่จะไม่ถูกคิดในสมดุลน้ำจนกว่า admin จะเพิ่ม mapping ในฐานข้อมูล -->
 <datalist id="crop-name-suggestions">
   <option value="นาข้าว"></option>
   <option value="ข้าวโพด"></option>
@@ -175,6 +177,12 @@
   <option value="ทุเรียน"></option>
   <option value="แตงโม"></option>
   <option value="พริก"></option>
+  <option value="อะโวคาโด"></option>
+  <option value="สตรอเบอรี่"></option>
+  <option value="ถั่วลิสง"></option>
+  <option value="ถั่วแดง"></option>
+  <option value="กาแฟ"></option>
+  <option value="มะนาว"></option>
 </datalist>
 
 <script src="https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
