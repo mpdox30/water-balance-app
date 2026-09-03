@@ -14,6 +14,17 @@ name: Balance engine (Phase 5 — สมดุลน้ำรายเดือ�
 # ต้องตั้ง GitHub Secret ก่อนรัน (Settings → Secrets and variables → Actions) — ใช้ตัวเดียวกับ
 # gee-pipeline.yml อยู่แล้ว ไม่ต้องเพิ่มใหม่:
 #   DATABASE_URL — เหมือนกับที่ตั้งใน Render (Supabase Transaction pooler)
+#
+# 2026-09-03: เพิ่ม auto-trigger ต่อจาก "GEE monthly pipeline" (gee-pipeline.yml) อัตโนมัติแทนที่ต้องกด
+# workflow_dispatch เองทุกเดือน — ใช้ workflow_run แทนการตั้ง cron เวลาคงที่แยกต่างหาก (เช่น ตั้งให้รันหลัง
+# gee-pipeline 1 ชม.) เพราะ GitHub เคยเลื่อนเวลารัน schedule จริงช้ากว่ากำหนดหลายชั่วโมง (ดู run #22 ของ
+# gee-pipeline.yml ที่ควรรัน 08:00 แต่จริงรัน 13:06) เวลาคงที่แบบนั้นเสี่ยงรันก่อน gee-pipeline เสร็จจริง
+# แล้วข้อมูล rainfall/et0 เดือนนั้นยังไม่มา balance_engine.py จะข้ามไปเงียบๆ — workflow_run รอ event
+# "completed" ของ gee-pipeline จริงๆ ก่อนเริ่ม เลยไม่มีปัญหานี้ — จำกัดเฉพาะ gee-pipeline ที่มาจาก schedule
+# เอง (github.event.workflow_run.event == 'schedule') ไม่ครอบคลุมตอนกด workflow_dispatch/backfill ของ
+# gee-pipeline เอง เพราะตอนนั้นอาจรันของเดือนที่ไม่ใช่ "เดือนก่อนหน้า" (เช่น backfill ปีก่อน) ซึ่งไม่ตรงกับ
+# ค่า default ของ balance_engine.py ที่ไม่ใส่ argument (คำนวณเดือนก่อนหน้าเสมอ) — กรณีนั้นยังต้องกด
+# workflow_dispatch ของไฟล์นี้เองแยกต่างหากเหมือนเดิม
 
 on:
   workflow_dispatch:
@@ -30,9 +41,19 @@ on:
       backfill_end:
         description: "Backfill หลายเดือนติดกัน — เดือนสิ้นสุด รูปแบบ YYYY-MM เช่น 2026-07 (รวมเดือนนี้ด้วย)"
         required: false
+  workflow_run:
+    workflows: ["GEE monthly pipeline (rain / ET0 / land cover / rice paddy)"]
+    types: [completed]
 
 jobs:
   run-balance-engine:
+    # รันเมื่อกด workflow_dispatch เอง หรือเมื่อ gee-pipeline.yml (เฉพาะรอบที่มาจาก schedule ของมันเอง) เสร็จ
+    # สำเร็จ — ข้าม (ไม่รัน) ถ้า gee-pipeline รอบนั้น fail หรือมาจาก workflow_dispatch/backfill ของมันเอง
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'schedule')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
