@@ -299,8 +299,8 @@ const THAI_MONTHS = ["ม.ค.","ก.พ.","มี.ค.","เม.ย.","พ.ค.
 let state = {
   tambons: [], currentTambon: null, villages: [], balance: null, waterSources: [], runoff: null, boundaries: {},
   chartFilter: "all",        // "all" | one of CATEGORY_ORDER — controls zone 4 (chart) AND zone 6 (village table/map colors)
-  month: null, map: null, boundaryLayers: [], sourceLayers: [], loadToken: 0,
-  layerVisibility: { boundaries: true, types: {}, heatmap: false }, // ควบคุมชั้นข้อมูลบนแผนที่ (จุด 5)
+  month: null, map: null, boundaryLayers: [], sourceLayers: [], tambonBoundaryLayer: null, loadToken: 0,
+  layerVisibility: { boundaries: true, tambonBoundary: true, types: {}, heatmap: false }, // ควบคุมชั้นข้อมูลบนแผนที่ (จุด 5)
 };
 
 async function fetchJSON(path) {
@@ -444,7 +444,7 @@ async function selectTambon(tambonId) {
 
   try {
     const [tambon, villages, balance, waterSources, runoff] = await Promise.all([
-      fetchJSON(`/tambons/${tambonId}`),
+      fetchJSON(`/tambons/${tambonId}?geom=true`),
       fetchJSON(`/villages?tambon_id=${tambonId}`),
       fetchJSON(`/balance?tambon_id=${tambonId}`),
       fetchJSON(`/water-sources?tambon_id=${tambonId}`),
@@ -988,20 +988,23 @@ function renderRunoffChart() {
 function buildLayerFilterUI() {
   const el = document.getElementById("layer-filter-body");
   const types = Object.keys(state.layerVisibility.types);
-  if (!types.length) {
-    el.innerHTML = `<div class="empty-note" style="padding:0.3rem 0;">ไม่มีชั้นข้อมูลให้แสดง</div>`;
-    return;
-  }
+  // หมายเหตุ: เดิมถ้าตำบลไม่มีแหล่งน้ำเลย (types ว่าง) จะซ่อน checkbox ขอบเขตตำบล/หมู่บ้าน/heatmap ไปด้วย
+  // ทั้งที่ชั้นข้อมูลเหล่านั้นยังแสดงอยู่บนแผนที่ (applyLayerVisibility ไม่ได้ผูกกับการมี/ไม่มี UI นี้) —
+  // แก้โดยแสดง checkbox ที่เหลือเสมอ แล้วแสดง "ไม่มีแหล่งน้ำ" แทนรายการ type ถ้าไม่มีแทน
   el.innerHTML = `
+    <label class="layer-check">
+      <input type="checkbox" id="layer-toggle-tambon-boundary" ${state.layerVisibility.tambonBoundary ? "checked" : ""}>
+      <span class="dot" style="background:#ffcc66;"></span> ขอบเขตตำบล
+    </label>
     <label class="layer-check">
       <input type="checkbox" id="layer-toggle-boundaries" ${state.layerVisibility.boundaries ? "checked" : ""}>
       <span class="dot" style="background:#8888ff;"></span> ขอบเขตหมู่บ้าน
     </label>
-    ${types.map(t => `
+    ${types.length ? types.map(t => `
       <label class="layer-check">
         <input type="checkbox" class="layer-toggle-type" data-type="${t}" ${state.layerVisibility.types[t] ? "checked" : ""}>
         <span class="dot" style="background:${SOURCE_TYPE_META[t]?.color || "#999"}"></span> ${SOURCE_TYPE_META[t]?.label || t}
-      </label>`).join("")}
+      </label>`).join("") : `<div class="empty-note" style="padding:0.3rem 0;">ไม่มีแหล่งน้ำในตำบลนี้</div>`}
     <div class="layer-check-divider"></div>
     <label class="layer-check heat">
       <input type="checkbox" id="layer-toggle-heatmap" ${state.layerVisibility.heatmap ? "checked" : ""}>
@@ -1009,6 +1012,10 @@ function buildLayerFilterUI() {
     </label>
     <div class="heat-legend" id="heat-legend" hidden></div>
   `;
+  document.getElementById("layer-toggle-tambon-boundary").addEventListener("change", (e) => {
+    state.layerVisibility.tambonBoundary = e.target.checked;
+    applyLayerVisibility();
+  });
   document.getElementById("layer-toggle-boundaries").addEventListener("change", (e) => {
     state.layerVisibility.boundaries = e.target.checked;
     applyLayerVisibility();
@@ -1027,6 +1034,12 @@ function buildLayerFilterUI() {
 
 function applyLayerVisibility() {
   if (!state.map) return;
+  if (state.tambonBoundaryLayer) {
+    const shouldShow = state.layerVisibility.tambonBoundary;
+    const onMap = state.map.hasLayer(state.tambonBoundaryLayer);
+    if (shouldShow && !onMap) state.tambonBoundaryLayer.addTo(state.map);
+    if (!shouldShow && onMap) state.map.removeLayer(state.tambonBoundaryLayer);
+  }
   state.boundaryLayers.forEach(layer => {
     const shouldShow = state.layerVisibility.boundaries;
     const onMap = state.map.hasLayer(layer);
@@ -1063,8 +1076,25 @@ function renderMap() {
 
     state.boundaryLayers = [];
     state.sourceLayers = [];
+    state.tambonBoundaryLayer = null;
     state.layerVisibility.types = {};
     const bounds = L.latLngBounds([]);
+
+    // ขอบเขตตำบล (จากฐานข้อมูลกลาง THA_Tambon หรือไฟล์ที่แอดมินอัปโหลดเอง — ดู thai_admin_boundary.py) —
+    // วาดแยกจากขอบเขตหมู่บ้านด้านล่างโดยสิ้นเชิง เพราะเป็นคนละที่มาข้อมูล/คนละตาราง (tambons.geom vs
+    // village_boundary_parts) ตำบลที่เพิ่งสร้างใหม่ยังไม่ทันวาด/อัปโหลดขอบเขตหมู่บ้านทีละหมู่จะไม่มีเส้น
+    // ขอบเขตหมู่บ้านเลย แต่ควรยังเห็นขอบเขตตำบลเป็นเส้นประอ้างอิงได้ (วาดก่อนชั้นอื่นให้อยู่ล่างสุด)
+    if (state.currentTambon && state.currentTambon.geom_geojson) {
+      try {
+        const tLayer = L.geoJSON(state.currentTambon.geom_geojson, {
+          style: { color: "#ffcc66", weight: 2, dashArray: "6 4", fill: false },
+        }).addTo(map);
+        tLayer.bindTooltip(`ขอบเขตตำบล ${state.currentTambon.name_th}`);
+        state.tambonBoundaryLayer = tLayer;
+        const tb = tLayer.getBounds();
+        if (tb && tb.isValid()) bounds.extend(tb);
+      } catch (e) { /* geometry ผิดรูปแบบ — ไม่ให้ทั้งแผนที่พัง */ }
+    }
 
     state.villages.forEach(v => {
       const parts = state.boundaries[v.village_id] || [];
