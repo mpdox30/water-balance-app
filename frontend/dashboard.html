@@ -354,14 +354,34 @@ function villageDemandM3(village, month) {
   return any ? sum : null;
 }
 
-// ความต้องการน้ำต่อพื้นที่ (ลบ.ม./ไร่) — คืน null ถ้าไม่มี total_rai กรอกไว้ (แยกจาก "ต้องการน้ำ = 0" ให้ชัดเจน
-// เพื่อไม่ให้หมู่บ้านที่ยังไม่มีข้อมูลพื้นที่ถูกระบายสีเหมือนมีความต้องการน้ำต่ำสุดโดยไม่ตั้งใจ)
-// รับ demandM3/totalRai แยกกัน เพราะ total_rai อยู่คนละ object กับ months — state.balance.villages
-// (VillageBalanceResponse) มีแค่ months, ส่วน total_rai อยู่ใน state.villages (VillageResponse) — ต้อง join
-// ด้วย village_id เอง ไม่มีมาให้พร้อมกันจาก backend ตัวเดียว
-function demandDensity(demandM3, totalRai) {
-  if (demandM3 == null || !totalRai || totalRai <= 0) return null;
-  return demandM3 / totalRai;
+// "พื้นที่ที่ก่อให้เกิดความต้องการน้ำ" ของหมวดที่เลือกอยู่ — ตั้งใจไม่ใช้ total_rai (พื้นที่สำรวจรวมทั้งหมู่บ้าน)
+// เพราะรวมพื้นที่ป่า/พื้นที่อื่นที่ไม่ได้ใช้น้ำเข้าไปด้วย หมู่บ้านที่มีป่าเยอะ (เช่นแม่นาเรือบางหมู่ ป่า >50%
+// ของพื้นที่) จะถูกหารด้วยตัวส่วนใหญ่เกินจริง ทำให้ความหนาแน่นดูต่ำกว่าความเป็นจริงมาก — ใช้เฉพาะพื้นที่ที่ตรง
+// กับหมวดความต้องการน้ำนั้นๆ แทน (residential_rai ขับเคลื่อนบริโภค/อุปโภค, พื้นที่เกษตรขับเคลื่อนน้ำเกษตร)
+// เกษตรใช้ latest_crop_area_rai (จากรายงานพืชเดือนล่าสุดจริง) ไม่ใช่ agri_rai (baseline ที่แทบไม่มีใครกรอก —
+// ดูเหตุผลเดียวกับที่ zone 2 "พื้นที่เกษตรรวม" ใช้ฟิลด์นี้แทน agri_rai) fallback ไป agri_rai เฉพาะกรณี
+// latest_crop_area_rai ว่าง (ยังไม่เคยมีรายงานพืชเข้ามาเลย แต่มีคนกรอก baseline ไว้ ดีกว่าไม่มีค่าอะไรเลย)
+// ปศุสัตว์ไม่มีฟิลด์พื้นที่เฉพาะของตัวเอง — ใช้พื้นที่ที่อยู่อาศัย+เกษตรรวมกันเป็นตัวประมาณ (สัตว์เลี้ยงส่วนใหญ่
+// อยู่ในพื้นที่บ้าน/ไร่นา ไม่ใช่ในป่า) ตัวเดียวกับที่ "ทั้งหมด" ใช้
+function villageEffectiveRai(vinfo, category) {
+  if (!vinfo) return null;
+  const agriRai = vinfo.latest_crop_area_rai || vinfo.agri_rai || 0;
+  const residentialRai = vinfo.residential_rai || 0;
+  let rai;
+  if (category === "consumption" || category === "domestic") rai = residentialRai;
+  else if (category === "agri") rai = agriRai;
+  else rai = residentialRai + agriRai; // "all" และ "livestock" — ดูเหตุผลในคอมเมนต์ด้านบน
+  return rai > 0 ? rai : null;
+}
+
+// ความต้องการน้ำต่อพื้นที่ (ลบ.ม./ไร่) — คืน null ถ้าไม่มีพื้นที่ที่เกี่ยวข้องกรอกไว้ (แยกจาก "ต้องการน้ำ = 0"
+// ให้ชัดเจน เพื่อไม่ให้หมู่บ้านที่ยังไม่มีข้อมูลพื้นที่ถูกระบายสีเหมือนมีความต้องการน้ำต่ำสุดโดยไม่ตั้งใจ)
+// รับ demandM3/effectiveRai แยกกัน เพราะพื้นที่หมู่บ้าน (residential_rai/latest_crop_area_rai) อยู่คนละ
+// object กับ months — state.balance.villages (VillageBalanceResponse) มีแค่ months ส่วนพื้นที่อยู่ใน
+// state.villages (VillageResponse) — ต้อง join ด้วย village_id เอง ไม่มีมาให้พร้อมกันจาก backend ตัวเดียว
+function demandDensity(demandM3, effectiveRai) {
+  if (demandM3 == null || !effectiveRai || effectiveRai <= 0) return null;
+  return demandM3 / effectiveRai;
 }
 
 function escapeHtml(s) {
@@ -1105,24 +1125,24 @@ function updateMapColors() {
 // ทั้งระบบ ตำบลเล็กๆ จะดูสีจางเท่ากันหมดจนแยกความแตกต่างภายในตำบลไม่ออก (สอดคล้องกับ pattern เดิมของกราฟ 4/6
 // ที่ก็ผูกกับตำบล+เดือน+หมวดที่เลือกอยู่เหมือนกัน ไม่ใช่ค่าคงที่ทั้งระบบ)
 function updateMapHeatColors() {
-  const values = []; // { layer, v, density } เฉพาะหมู่บ้านที่มี total_rai ให้คำนวณได้จริง
+  const values = []; // { layer, v, density } เฉพาะหมู่บ้านที่มีพื้นที่ที่เกี่ยวข้องให้คำนวณได้จริง
   const noData = []; // { layer, v }
   state.boundaryLayers.forEach(layer => {
     const v = state.balance.villages.find(bv => bv.village_id === layer.villageId); // months (demand)
-    const vinfo = state.villages.find(vi => vi.village_id === layer.villageId);      // total_rai (พื้นที่)
+    const vinfo = state.villages.find(vi => vi.village_id === layer.villageId);      // residential_rai/latest_crop_area_rai
     const demand = v ? villageDemandM3(v, state.month) : null;
-    const density = demandDensity(demand, vinfo?.total_rai);
+    const density = demandDensity(demand, villageEffectiveRai(vinfo, state.chartFilter));
     if (density == null) { noData.push({ layer, v }); return; }
     values.push({ layer, v, density });
   });
 
   const noDataLabel = ({ layer, v }) => {
     layer.setStyle({ color: "#666", fillColor: "#666", fillOpacity: 0.15, dashArray: "4 3" });
-    if (v) layer.setTooltipContent(`หมู่ ${v.moo} ${v.name_th} — ไม่มีข้อมูลพื้นที่หมู่บ้าน (total_rai) คำนวณความหนาแน่นไม่ได้`);
+    if (v) layer.setTooltipContent(`หมู่ ${v.moo} ${v.name_th} — ไม่มีข้อมูลพื้นที่ที่เกี่ยวข้อง (บ้าน/เกษตร) คำนวณความหนาแน่นไม่ได้`);
   };
 
   if (!values.length) {
-    // ไม่มีหมู่บ้านไหนคำนวณได้เลย (total_rai ว่างทุกหมู่บ้าน) — แจ้งเหตุผลแทนการระบายสีมั่ว
+    // ไม่มีหมู่บ้านไหนคำนวณได้เลย (พื้นที่ที่เกี่ยวข้องว่างทุกหมู่บ้าน) — แจ้งเหตุผลแทนการระบายสีมั่ว
     noData.forEach(noDataLabel);
     document.getElementById("heat-legend")?.setAttribute("hidden", "");
     return;
@@ -1139,21 +1159,31 @@ function updateMapHeatColors() {
     layer.setStyle({ color, fillColor: color, fillOpacity: 0.65 });
     if (v) layer.setTooltipContent(`หมู่ ${v.moo} ${v.name_th} — ${fmt(density)} ลบ.ม./ไร่`);
   });
-  // หมู่บ้านที่ขาด total_rai ยังคงแสดงขอบเขตไว้ (เทาโปร่ง + เส้นประ) ไม่ซ่อนหายไปเฉยๆ ผู้ใช้จะได้รู้ว่ามีหมู่บ้าน
-  // นี้อยู่แต่ยังกรอกพื้นที่ไม่ครบ ไม่ใช่ค่าความต้องการน้ำต่ำสุดบนสเกล
+  // หมู่บ้านที่ขาดพื้นที่ที่เกี่ยวข้อง (residential_rai/latest_crop_area_rai แล้วแต่หมวด) ยังคงแสดงขอบเขตไว้
+  // (เทาโปร่ง + เส้นประ) ไม่ซ่อนหายไปเฉยๆ ผู้ใช้จะได้รู้ว่ามีหมู่บ้านนี้อยู่แต่ยังกรอกพื้นที่ไม่ครบ ไม่ใช่ค่า
+  // ความต้องการน้ำต่ำสุดบนสเกล
   noData.forEach(noDataLabel);
 
   renderHeatLegend(min, max);
 }
 
+// คำอธิบายพื้นที่ส่วนหารสั้นๆ ต่อหมวด — โชว์ใน legend กันสับสนว่าทำไมหมู่บ้านป่าเยอะไม่ได้ดูจางเกินจริง
+// (ตัดพื้นที่ป่า/พื้นที่อื่นออกจากส่วนหารไปแล้ว ดูเหตุผลเต็มที่ villageEffectiveRai)
+const HEAT_AREA_LABEL = {
+  consumption: "พื้นที่อยู่อาศัย", domestic: "พื้นที่อยู่อาศัย",
+  agri: "พื้นที่เกษตร (รายงานล่าสุด)",
+  all: "พื้นที่อยู่อาศัย+เกษตร", livestock: "พื้นที่อยู่อาศัย+เกษตร",
+};
+
 function renderHeatLegend(min, max) {
   const el = document.getElementById("heat-legend");
   if (!el) return;
   el.hidden = false;
+  const areaLabel = HEAT_AREA_LABEL[state.chartFilter] || HEAT_AREA_LABEL.all;
   el.innerHTML = `
     <div class="ramp"></div>
     <div class="scale"><span>${fmt(min)}</span><span>${fmt(max)}</span></div>
-    <div class="unit">ลบ.ม./ไร่ · ${state.month ? thaiMonthLabel(state.month) : ""} · ${CATEGORY_LABEL_SHORT[state.chartFilter] || "ทั้งหมด"}</div>
+    <div class="unit">ลบ.ม./ไร่ (${areaLabel}, ไม่รวมป่า) · ${state.month ? thaiMonthLabel(state.month) : ""} · ${CATEGORY_LABEL_SHORT[state.chartFilter] || "ทั้งหมด"}</div>
   `;
 }
 
