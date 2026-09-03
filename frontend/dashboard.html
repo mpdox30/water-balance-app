@@ -147,6 +147,16 @@
   .layer-check { display: flex; align-items: center; gap: 0.5em; font-size: 0.82em; padding: 0.22rem 0; cursor: pointer; }
   .layer-check input { accent-color: var(--accent); cursor: pointer; }
   .layer-check .dot { display: inline-block; width: 0.7em; height: 0.7em; border-radius: 50%; flex: none; }
+  .layer-check.heat .dot { border-radius: 3px; } /* สี่เหลี่ยมแทนวงกลม บอกว่าเป็น scale ต่อเนื่อง ไม่ใช่ประเภทข้อมูลจุด */
+  .layer-check-divider { border-top: 1px dashed var(--hair); margin: 0.4rem 0; }
+  /* แถบไล่สี (legend) ของ heat map — แสดงเฉพาะตอนติ๊กเปิด และมีข้อมูลพื้นที่พอคำนวณ */
+  .heat-legend { padding: 0.15rem 0 0.3rem 1.2em; }
+  .heat-legend .ramp {
+    height: 0.55rem; border-radius: 3px; margin-bottom: 0.25rem;
+    background: linear-gradient(to right, #fff6b7, #ffd166, #ff9f4a, #ff5c3c, #b3001b);
+  }
+  .heat-legend .scale { display: flex; justify-content: space-between; font-size: 0.72em; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+  .heat-legend .unit { font-size: 0.72em; color: var(--text-faint); margin-top: 0.1rem; }
 
   /* ---- zone 4: combined chart ---- */
   .chart-filter { display: flex; gap: 0.35rem; flex-wrap: wrap; margin-bottom: 0.6rem; }
@@ -290,7 +300,7 @@ let state = {
   tambons: [], currentTambon: null, villages: [], balance: null, waterSources: [], runoff: null, boundaries: {},
   chartFilter: "all",        // "all" | one of CATEGORY_ORDER — controls zone 4 (chart) AND zone 6 (village table/map colors)
   month: null, map: null, boundaryLayers: [], sourceLayers: [], loadToken: 0,
-  layerVisibility: { boundaries: true, types: {} }, // ควบคุมชั้นข้อมูลบนแผนที่ (จุด 5)
+  layerVisibility: { boundaries: true, types: {}, heatmap: false }, // ควบคุมชั้นข้อมูลบนแผนที่ (จุด 5)
 };
 
 async function fetchJSON(path) {
@@ -305,6 +315,54 @@ function thaiMonthLabel(iso) {
 }
 
 function fmt(n) { return (n == null || Number.isNaN(n)) ? "—" : Math.round(n).toLocaleString(); }
+
+// ================= Heat map: ระบายสีขอบเขตหมู่บ้านตามความต้องการน้ำต่อพื้นที่ (จุด 3, ชั้นข้อมูล) =================
+// สเกลไล่สี เหลืองอ่อน (ต้องการน้ำ/ไร่ ต่ำ) → แดงเข้ม (สูง) — จุดหยุดสีตรงกับ .heat-legend .ramp ใน CSS ด้านบน
+const HEAT_RAMP = ["#fff6b7", "#ffd166", "#ff9f4a", "#ff5c3c", "#b3001b"];
+
+function hexToRgb(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+// t อยู่ในช่วง [0,1] — เดินไล่ตามจุดหยุดสีใน HEAT_RAMP แล้ว interpolate เชิงเส้นระหว่างสองจุดที่ใกล้ที่สุด
+function heatColor(t) {
+  const clamped = Math.max(0, Math.min(1, t));
+  const segs = HEAT_RAMP.length - 1;
+  const pos = clamped * segs;
+  const i = Math.min(segs - 1, Math.floor(pos));
+  const frac = pos - i;
+  const [r1, g1, b1] = hexToRgb(HEAT_RAMP[i]);
+  const [r2, g2, b2] = hexToRgb(HEAT_RAMP[i + 1]);
+  const r = Math.round(r1 + (r2 - r1) * frac);
+  const g = Math.round(g1 + (g2 - g1) * frac);
+  const b = Math.round(b1 + (b2 - b1) * frac);
+  return `rgb(${r},${g},${b})`;
+}
+
+// ความต้องการน้ำของหมู่บ้านในเดือน/หมวดที่เลือกอยู่ตอนนี้ (ลบ.ม.) — "ทั้งหมด" รวมทุกหมวด ไม่ใช่หมวดแย่สุด
+// (ต่างจาก worstCategoryStatus ที่ใช้กับสีเขียว/แดงปกติ เพราะ heat map ต้องการ "ปริมาณ" ไม่ใช่ "สถานะ")
+function villageDemandM3(village, month) {
+  const cellsAt = village.months?.[month];
+  if (!cellsAt) return null;
+  if (state.chartFilter !== "all") return cellsAt[state.chartFilter]?.demand_cum ?? null;
+  let sum = 0, any = false;
+  CATEGORY_ORDER.forEach(cat => {
+    const d = cellsAt[cat]?.demand_cum;
+    if (d != null) { sum += d; any = true; }
+  });
+  return any ? sum : null;
+}
+
+// ความต้องการน้ำต่อพื้นที่ (ลบ.ม./ไร่) — คืน null ถ้าไม่มี total_rai กรอกไว้ (แยกจาก "ต้องการน้ำ = 0" ให้ชัดเจน
+// เพื่อไม่ให้หมู่บ้านที่ยังไม่มีข้อมูลพื้นที่ถูกระบายสีเหมือนมีความต้องการน้ำต่ำสุดโดยไม่ตั้งใจ)
+// รับ demandM3/totalRai แยกกัน เพราะ total_rai อยู่คนละ object กับ months — state.balance.villages
+// (VillageBalanceResponse) มีแค่ months, ส่วน total_rai อยู่ใน state.villages (VillageResponse) — ต้อง join
+// ด้วย village_id เอง ไม่มีมาให้พร้อมกันจาก backend ตัวเดียว
+function demandDensity(demandM3, totalRai) {
+  if (demandM3 == null || !totalRai || totalRai <= 0) return null;
+  return demandM3 / totalRai;
+}
 
 function escapeHtml(s) {
   return String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -924,6 +982,12 @@ function buildLayerFilterUI() {
         <input type="checkbox" class="layer-toggle-type" data-type="${t}" ${state.layerVisibility.types[t] ? "checked" : ""}>
         <span class="dot" style="background:${SOURCE_TYPE_META[t]?.color || "#999"}"></span> ${SOURCE_TYPE_META[t]?.label || t}
       </label>`).join("")}
+    <div class="layer-check-divider"></div>
+    <label class="layer-check heat">
+      <input type="checkbox" id="layer-toggle-heatmap" ${state.layerVisibility.heatmap ? "checked" : ""}>
+      <span class="dot" style="background:linear-gradient(135deg,#ffd166,#b3001b);"></span> ความต้องการน้ำ/พื้นที่
+    </label>
+    <div class="heat-legend" id="heat-legend" hidden></div>
   `;
   document.getElementById("layer-toggle-boundaries").addEventListener("change", (e) => {
     state.layerVisibility.boundaries = e.target.checked;
@@ -934,6 +998,10 @@ function buildLayerFilterUI() {
       state.layerVisibility.types[e.target.dataset.type] = e.target.checked;
       applyLayerVisibility();
     });
+  });
+  document.getElementById("layer-toggle-heatmap").addEventListener("change", (e) => {
+    state.layerVisibility.heatmap = e.target.checked;
+    updateMapColors(); // แค่เปลี่ยนสีของ polygon เดิม ไม่ต้อง add/remove layer — ไม่เรียก applyLayerVisibility()
   });
 }
 
@@ -1020,13 +1088,73 @@ function renderMap() {
 }
 
 function updateMapColors() {
+  if (state.layerVisibility.heatmap) { updateMapHeatColors(); return; }
+  document.getElementById("heat-legend")?.setAttribute("hidden", "");
   const statusFn = (monthsObj, m) => state.chartFilter === "all" ? worstCategoryStatus(monthsObj, m) : villageStatusFor({ months: monthsObj }, state.chartFilter, m);
   state.boundaryLayers.forEach(layer => {
     const v = state.balance.villages.find(bv => bv.village_id === layer.villageId);
     const cell = v ? statusFn(v.months, state.month) : { status: "deficit" };
     const deficit = cell.status !== "surplus";
-    layer.setStyle({ color: deficit ? "#ff5c6c" : "#35d17e", fillColor: deficit ? "#ff5c6c" : "#35d17e" });
+    layer.setStyle({ color: deficit ? "#ff5c6c" : "#35d17e", fillColor: deficit ? "#ff5c6c" : "#35d17e", fillOpacity: 0.3 });
+    if (v) layer.setTooltipContent(`หมู่ ${v.moo} ${v.name_th}`);
   });
+}
+
+// โหมด heat map: ระบายสี polygon เดิม (boundaryLayers) ตามความต้องการน้ำ/พื้นที่ (ลบ.ม./ไร่) แบบ min-max
+// เทียบกันเฉพาะภายในตำบลที่กำลังดูอยู่ — เพราะสเกลความต้องการน้ำต่างกันมากระหว่างตำบล ถ้าใช้สเกลตายตัวรวม
+// ทั้งระบบ ตำบลเล็กๆ จะดูสีจางเท่ากันหมดจนแยกความแตกต่างภายในตำบลไม่ออก (สอดคล้องกับ pattern เดิมของกราฟ 4/6
+// ที่ก็ผูกกับตำบล+เดือน+หมวดที่เลือกอยู่เหมือนกัน ไม่ใช่ค่าคงที่ทั้งระบบ)
+function updateMapHeatColors() {
+  const values = []; // { layer, v, density } เฉพาะหมู่บ้านที่มี total_rai ให้คำนวณได้จริง
+  const noData = []; // { layer, v }
+  state.boundaryLayers.forEach(layer => {
+    const v = state.balance.villages.find(bv => bv.village_id === layer.villageId); // months (demand)
+    const vinfo = state.villages.find(vi => vi.village_id === layer.villageId);      // total_rai (พื้นที่)
+    const demand = v ? villageDemandM3(v, state.month) : null;
+    const density = demandDensity(demand, vinfo?.total_rai);
+    if (density == null) { noData.push({ layer, v }); return; }
+    values.push({ layer, v, density });
+  });
+
+  const noDataLabel = ({ layer, v }) => {
+    layer.setStyle({ color: "#666", fillColor: "#666", fillOpacity: 0.15, dashArray: "4 3" });
+    if (v) layer.setTooltipContent(`หมู่ ${v.moo} ${v.name_th} — ไม่มีข้อมูลพื้นที่หมู่บ้าน (total_rai) คำนวณความหนาแน่นไม่ได้`);
+  };
+
+  if (!values.length) {
+    // ไม่มีหมู่บ้านไหนคำนวณได้เลย (total_rai ว่างทุกหมู่บ้าน) — แจ้งเหตุผลแทนการระบายสีมั่ว
+    noData.forEach(noDataLabel);
+    document.getElementById("heat-legend")?.setAttribute("hidden", "");
+    return;
+  }
+
+  const densities = values.map(x => x.density);
+  const min = Math.min(...densities);
+  const max = Math.max(...densities);
+  const span = max - min;
+
+  values.forEach(({ layer, v, density }) => {
+    const t = span > 0 ? (density - min) / span : 0.5; // ค่าเดียวกันหมดทุกหมู่บ้าน (span=0) → กึ่งกลางสเกล
+    const color = heatColor(t);
+    layer.setStyle({ color, fillColor: color, fillOpacity: 0.65 });
+    if (v) layer.setTooltipContent(`หมู่ ${v.moo} ${v.name_th} — ${fmt(density)} ลบ.ม./ไร่`);
+  });
+  // หมู่บ้านที่ขาด total_rai ยังคงแสดงขอบเขตไว้ (เทาโปร่ง + เส้นประ) ไม่ซ่อนหายไปเฉยๆ ผู้ใช้จะได้รู้ว่ามีหมู่บ้าน
+  // นี้อยู่แต่ยังกรอกพื้นที่ไม่ครบ ไม่ใช่ค่าความต้องการน้ำต่ำสุดบนสเกล
+  noData.forEach(noDataLabel);
+
+  renderHeatLegend(min, max);
+}
+
+function renderHeatLegend(min, max) {
+  const el = document.getElementById("heat-legend");
+  if (!el) return;
+  el.hidden = false;
+  el.innerHTML = `
+    <div class="ramp"></div>
+    <div class="scale"><span>${fmt(min)}</span><span>${fmt(max)}</span></div>
+    <div class="unit">ลบ.ม./ไร่ · ${state.month ? thaiMonthLabel(state.month) : ""} · ${CATEGORY_LABEL_SHORT[state.chartFilter] || "ทั้งหมด"}</div>
+  `;
 }
 
 loadTambonList();
