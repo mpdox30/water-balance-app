@@ -14,6 +14,15 @@ name: GEE monthly pipeline (rain / ET0 / land cover / rice paddy)
 #   EE_SERVICE_ACCOUNT_KEY — เนื้อหา JSON เต็มของ GEE service account (ผูกกับ GCP project ที่เปิด
 #                            ใช้ Earth Engine API แล้ว)
 #   DATABASE_URL           — เหมือนกับที่ตั้งใน Render (Supabase Transaction pooler)
+#
+# 2026-09-03: run #22 (cron ต้นเดือน 1 ก.ย.) fail ที่ step "รัน pipeline" — ee.EEException:
+# "Dictionary.get: Dictionary does not contain key: 'precipitation'." ใน compute_monthly_rainfall()
+# (pipeline/rainfall_et0.py) สาเหตุคือ CHIRPS Daily (UCSB-CHG/CHIRPS/DAILY) เวอร์ชัน final ที่ asset
+# นี้ใช้ ออกช้ากว่าสิ้นเดือนจริงประมาณ 3 สัปดาห์ — ตอนรันวันที่ 1 ของเดือน (คำนวณเดือนก่อนหน้าซึ่งเพิ่ง
+# จบไปแค่ 1 วัน) ข้อมูล CHIRPS final ของเดือนนั้นยังไม่ถูกเผยแพร่ .filterDate() เลยได้ ImageCollection
+# ว่าง .sum() บน collection ว่างจึงได้ image ที่ไม่มี band "precipitation" เลย ทำให้ .get() พัง (ไม่ใช่
+# บั๊กชั่วคราว จะพังซ้ำทุกต้นเดือน) — แก้โดยเลื่อน cron ไปท้ายเดือนแทน (ยังคำนวณ "เดือนก่อนหน้า" เหมือน
+# เดิม แต่รอให้ CHIRPS final มีเวลาออกก่อน ~28 วัน ปลอดภัยกว่า 3 สัปดาห์ที่ CHIRPS ใช้จริง)
 
 on:
   workflow_dispatch:
@@ -31,7 +40,8 @@ on:
         description: "Backfill หลายเดือนติดกัน — เดือนสิ้นสุด รูปแบบ YYYY-MM เช่น 2026-06 (รวมเดือนนี้ด้วย)"
         required: false
   schedule:
-    - cron: "0 1 1 * *"  # ต้นเดือน 08:00 น. เวลาไทย (UTC+7)
+    - cron: "0 1 28 * *"  # วันที่ 28 ของเดือน 08:00 น. เวลาไทย (UTC+7) — คำนวณเดือนก่อนหน้า
+                          # (เลื่อนจากวันที่ 1 เพราะ CHIRPS final lag ~3 สัปดาห์ ดูหมายเหตุ 2026-09-03 ด้านบน)
 
 jobs:
   run-pipeline:
