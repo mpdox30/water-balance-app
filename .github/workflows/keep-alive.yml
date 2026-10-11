@@ -1,0 +1,36 @@
+name: Keep-alive (Supabase + Render)
+
+# Supabase แพ็กเกจ Free จะ pause โปรเจกต์อัตโนมัติถ้าไม่มี "กิจกรรม" เกิน 7 วัน (ได้รับอีเมลเตือน 2569-10-11)
+# — pause แล้ว backend บน Render ต่อฐานข้อมูลไม่ได้ ทั้ง dashboard/หน้ากรอกรายงาน/pipeline จะพังพร้อมกัน
+# ตัวมันเองรันเดือนละครั้ง (gee-pipeline วันที่ 28) ห่างเกิน 7 วันมาก และคนเปิด dashboard ไม่ได้การันตีว่าจะมี query ทุกสัปดาห์
+#
+# workflow นี้ทำ 2 อย่างทุก 2 วัน:
+#   1) ยิง GET /health ของ backend (Render) — ปลุก Render จาก cold-start ไปด้วย และ /health เองรัน
+#      "select 1" ลง Supabase อยู่แล้ว (backend/main.py)
+#   2) query ตารางจริงตรงๆ ด้วย DATABASE_URL (secret ตัวเดียวกับ gee-pipeline/balance-engine ไม่ต้องเพิ่มใหม่)
+#      — ทำแยกอีกชั้นเผื่อ "select 1" ไม่ถูกนับเป็นกิจกรรม และเผื่อ Render ล่ม แต่ฐานข้อมูลยังต้องถูกแตะ
+#
+# ถ้า step ไหนล้ม workflow จะขึ้น failed → GitHub ส่งอีเมลแจ้งเจ้าของ repo ตามค่า default
+# หมายเหตุ: GitHub จะปิด scheduled workflow อัตโนมัติถ้า repo สาธารณะไม่มี commit/กิจกรรมเกิน 60 วัน
+# (ถ้าเกิดขึ้น ให้เข้า Actions tab กด Enable workflow ใหม่ หรือ push commit เล็กๆ)
+
+on:
+  schedule:
+    - cron: "17 3 */2 * *"
+  workflow_dispatch:
+
+jobs:
+  keep-alive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: ปลุก backend (Render) + ให้ /health รัน select 1 ลง Supabase
+        run: |
+          curl -fsS --retry 5 --retry-delay 20 --retry-all-errors --max-time 120 \
+            https://water-balance-app.onrender.com/health
+          echo
+      - name: query ตารางจริงใน Supabase ตรงๆ
+        if: always()
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "select count(*) as tambons from tambons;"
