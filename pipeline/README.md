@@ -1,6 +1,6 @@
 # pipeline/
 
-โค้ด GEE pipeline รายเดือน (ฝน CHIRPS / ET0 MODIS / land cover / นาข้าว Sentinel-1 SAR) — **Phase 2
+โค้ด GEE pipeline รายเดือน (ฝน CHIRPS v3 / ET0 MODIS / land cover / นาข้าว Sentinel-1 SAR) — **Phase 2
 เขียนเสร็จแล้ว** ตาม `00_docs/01-phased-work-plan.md` ยังไม่ได้ทดสอบกับ GEE credential จริง (รอ
 `EE_SERVICE_ACCOUNT_KEY` — ดู README หลักของ repo)
 

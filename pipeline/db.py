@@ -49,15 +49,16 @@ def fetch_villages(conn, tambon_id: str) -> list[dict]:
         return cur.fetchall()
 
 
-def upsert_rainfall_monthly(conn, tambon_id: str, month: str, rainfall_mm: float | None):
+def upsert_rainfall_monthly(conn, tambon_id: str, month: str, rainfall_mm: float | None,
+                            source: str = "CHIRPS-v3"):
     if rainfall_mm is None:
         return
     with conn.cursor() as cur:
         cur.execute(
             "insert into rainfall_monthly (tambon_id, month, rainfall_mm, source) "
-            "values (%s, %s, %s, 'CHIRPS') "
+            "values (%s, %s, %s, %s) "
             "on conflict (tambon_id, month) do update set rainfall_mm = excluded.rainfall_mm, source = excluded.source",
-            (tambon_id, month, rainfall_mm),
+            (tambon_id, month, rainfall_mm, source),
         )
 
 
